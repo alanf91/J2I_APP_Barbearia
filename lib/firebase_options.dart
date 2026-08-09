@@ -57,7 +57,6 @@ class DefaultFirebaseOptions {
     projectId: 'j2i-app-barbearia',
     storageBucket: 'j2i-app-barbearia.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyAqr5gKWP-LNdDJzBimglBAh8673QSZldI',
     appId: '1:519932122801:ios:1ab7a0648de29e2886b490',
@@ -66,7 +65,6 @@ class DefaultFirebaseOptions {
     storageBucket: 'j2i-app-barbearia.firebasestorage.app',
     iosBundleId: 'com.example.j2iAppBarbearia',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyAqr5gKWP-LNdDJzBimglBAh8673QSZldI',
     appId: '1:519932122801:ios:1ab7a0648de29e2886b490',
