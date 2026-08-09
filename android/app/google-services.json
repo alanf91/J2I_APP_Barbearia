@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "519932122801",
+    "project_id": "j2i-app-barbearia",
+    "storage_bucket": "j2i-app-barbearia.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519932122801:android:5c1f8af6a065e1b386b490",
+        "android_client_info": {
+          "package_name": "com.example.j2i_app_barbearia"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLZCXFkt95TSN6pivcwgsooMwgoQ0i3QE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
