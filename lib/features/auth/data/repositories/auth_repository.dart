@@ -13,6 +13,15 @@ class AuthRepository {
     : _auth = auth ?? FirebaseAuth.instance,
       _firestore = firestore ?? FirebaseFirestore.instance;
 
+  // USUÁRIO ATUAL
+  User? get currentUser => _auth.currentUser;
+
+  // MONITORA LOGIN / LOGOUT
+  Stream<User?> authStateChanges() {
+    return _auth.authStateChanges();
+  }
+
+  // CADASTRO
   Future<void> register({
     required String name,
     required String cpf,
@@ -85,5 +94,21 @@ class AuthRepository {
 
       rethrow;
     }
+  }
+
+  // LOGIN
+  Future<UserCredential> signIn({
+    required String email,
+    required String password,
+  }) async {
+    return _auth.signInWithEmailAndPassword(
+      email: email.trim().toLowerCase(),
+      password: password,
+    );
+  }
+
+  // LOGOUT
+  Future<void> signOut() async {
+    await _auth.signOut();
   }
 }

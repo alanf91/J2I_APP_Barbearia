@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../auth/presentation/pages/register_page.dart';
+import 'package:j2i_app_barbearia/features/auth/presentation/pages/auth_gate_page.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -22,7 +22,7 @@ class _SplashPageState extends State<SplashPage> {
 
     Navigator.of(
       context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const RegisterPage()));
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const AuthGatePage()));
   }
 
   @override
