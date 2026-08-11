@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../auth/presentation/pages/register_page.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -16,6 +17,12 @@ class _SplashPageState extends State<SplashPage> {
 
   Future<void> _initializeApp() async {
     await Future.delayed(const Duration(seconds: 2));
+
+    if (!mounted) return;
+
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const RegisterPage()));
   }
 
   @override
@@ -26,25 +33,14 @@ class _SplashPageState extends State<SplashPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.content_cut,
-                size: 80,
-              ),
+              Icon(Icons.content_cut, size: 80),
               SizedBox(height: 24),
               Text(
                 'J2I Barbearia',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 8),
-              Text(
-                'Agendamentos',
-                style: TextStyle(
-                  fontSize: 16,
-                ),
-              ),
+              Text('Agendamentos', style: TextStyle(fontSize: 16)),
               SizedBox(height: 40),
               CircularProgressIndicator(),
             ],
