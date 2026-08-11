@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 
 import 'package:j2i_app_barbearia/core/errors/auth_exceptions.dart';
 import 'package:j2i_app_barbearia/core/utils/cpf_validator.dart';
+import 'package:j2i_app_barbearia/core/utils/password_validator.dart';
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
+import 'package:j2i_app_barbearia/features/auth/presentation/widgets/password_requirements.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -81,13 +83,14 @@ class _RegisterPageState extends State<RegisterPage> {
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
-      final message = _firebaseAuthErrorMessage(e);
-
-      _showMessage(message);
-    } catch (e) {
+      _showMessage(_firebaseAuthErrorMessage(e));
+    } catch (_) {
       if (!mounted) return;
 
-      _showMessage('Ocorreu um erro ao realizar o cadastro. Tente novamente.');
+      _showMessage(
+        'Ocorreu um erro ao realizar o cadastro. '
+        'Tente novamente.',
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -106,16 +109,20 @@ class _RegisterPageState extends State<RegisterPage> {
         return 'Informe um e-mail válido.';
 
       case 'weak-password':
-        return 'A senha informada é muito fraca.';
+        return 'A senha informada não atende aos '
+            'requisitos de segurança.';
 
       case 'network-request-failed':
-        return 'Não foi possível conectar. Verifique sua internet.';
+        return 'Não foi possível conectar. '
+            'Verifique sua internet.';
 
       case 'too-many-requests':
-        return 'Muitas tentativas foram realizadas. Aguarde e tente novamente.';
+        return 'Muitas tentativas foram realizadas. '
+            'Aguarde e tente novamente.';
 
       case 'operation-not-allowed':
-        return 'O cadastro por e-mail e senha não está habilitado.';
+        return 'O cadastro por e-mail e senha '
+            'não está habilitado.';
 
       default:
         return 'Não foi possível realizar o cadastro.';
@@ -135,6 +142,8 @@ class _RegisterPageState extends State<RegisterPage> {
     _phoneController.clear();
     _passwordController.clear();
     _confirmPasswordController.clear();
+
+    setState(() {});
   }
 
   @override
@@ -165,7 +174,8 @@ class _RegisterPageState extends State<RegisterPage> {
                 const SizedBox(height: 8),
 
                 const Text(
-                  'Crie sua conta para realizar seus agendamentos.',
+                  'Crie sua conta para realizar '
+                  'seus agendamentos.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 15),
                 ),
@@ -206,6 +216,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   controller: _cpfController,
                   keyboardType: TextInputType.number,
                   textInputAction: TextInputAction.next,
+                  maxLength: 11,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(11),
@@ -217,7 +228,6 @@ class _RegisterPageState extends State<RegisterPage> {
                     prefixIcon: Icon(Icons.badge_outlined),
                     counterText: '',
                   ),
-                  maxLength: 11,
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Informe seu CPF.';
@@ -271,6 +281,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   keyboardType: TextInputType.phone,
                   textInputAction: TextInputAction.next,
                   autofillHints: const [AutofillHints.telephoneNumber],
+                  maxLength: 11,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(11),
@@ -282,7 +293,6 @@ class _RegisterPageState extends State<RegisterPage> {
                     prefixIcon: Icon(Icons.phone_outlined),
                     counterText: '',
                   ),
-                  maxLength: 11,
                   validator: (value) {
                     final phone = value?.trim() ?? '';
 
@@ -291,7 +301,8 @@ class _RegisterPageState extends State<RegisterPage> {
                     }
 
                     if (phone.length < 10 || phone.length > 11) {
-                      return 'Informe um telefone válido com DDD.';
+                      return 'Informe um telefone '
+                          'válido com DDD.';
                     }
 
                     return null;
@@ -306,6 +317,9 @@ class _RegisterPageState extends State<RegisterPage> {
                   obscureText: _hidePassword,
                   textInputAction: TextInputAction.next,
                   autofillHints: const [AutofillHints.newPassword],
+                  onChanged: (_) {
+                    setState(() {});
+                  },
                   decoration: InputDecoration(
                     labelText: 'Senha',
                     border: const OutlineInputBorder(),
@@ -325,19 +339,14 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Informe uma senha.';
-                    }
-
-                    // Na Etapa 12 vamos substituir
-                    // por uma política completa de senha forte.
-                    if (value.length < 6) {
-                      return 'A senha deve possuir pelo menos 6 caracteres.';
-                    }
-
-                    return null;
+                    return PasswordValidator.validationMessage(value ?? '');
                   },
                 ),
+
+                const SizedBox(height: 12),
+
+                // INDICADORES DA SENHA
+                PasswordRequirements(password: _passwordController.text),
 
                 const SizedBox(height: 16),
 
@@ -387,6 +396,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                 const SizedBox(height: 28),
 
+                // BOTÃO CADASTRAR
                 SizedBox(
                   height: 52,
                   child: FilledButton(
