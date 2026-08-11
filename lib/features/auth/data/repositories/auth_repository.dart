@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import '../models/user_profile.dart';
+import 'package:j2i_app_barbearia/core/errors/auth_exceptions.dart';
+import 'package:j2i_app_barbearia/core/utils/cpf_validator.dart';
+import 'package:j2i_app_barbearia/features/auth/data/models/user_profile.dart';
 
 class AuthRepository {
   final FirebaseAuth _auth;
@@ -18,11 +20,17 @@ class AuthRepository {
     required String phone,
     required String password,
   }) async {
+    final normalizedCpf = CpfValidator.normalize(cpf);
+
+    if (!CpfValidator.isValid(normalizedCpf)) {
+      throw const InvalidCpfException();
+    }
+
     UserCredential? credential;
 
     try {
       credential = await _auth.createUserWithEmailAndPassword(
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         password: password,
       );
 
@@ -37,14 +45,37 @@ class AuthRepository {
       final profile = UserProfile(
         uid: user.uid,
         name: name.trim(),
-        cpf: cpf.trim(),
+        cpf: normalizedCpf,
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
         role: 'client',
         createdAt: Timestamp.now(),
       );
 
-      await _firestore.collection('users').doc(user.uid).set(profile.toMap());
+      final userReference = _firestore.collection('users').doc(user.uid);
+
+      final cpfReference = _firestore
+          .collection('cpf_registry')
+          .doc(normalizedCpf);
+
+      final batch = _firestore.batch();
+
+      batch.set(cpfReference, {
+        'uid': user.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      batch.set(userReference, profile.toMap());
+
+      try {
+        await batch.commit();
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') {
+          throw const CpfAlreadyInUseException();
+        }
+
+        rethrow;
+      }
     } catch (e) {
       if (credential?.user != null) {
         try {
