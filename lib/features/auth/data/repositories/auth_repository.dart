@@ -13,41 +13,16 @@ class AuthRepository {
     : _auth = auth ?? FirebaseAuth.instance,
       _firestore = firestore ?? FirebaseFirestore.instance;
 
-  // USUÁRIO ATUAL
   User? get currentUser => _auth.currentUser;
 
-  // MONITORA LOGIN E LOGOUT
   Stream<User?> authStateChanges() {
     return _auth.authStateChanges();
   }
 
-  // MONITORA ALTERAÇÕES DO USUÁRIO
   Stream<User?> userChanges() {
     return _auth.userChanges();
   }
 
-  // ENVIA E-MAIL DE VERIFICAÇÃO
-  Future<void> sendEmailVerification() async {
-    final user = _auth.currentUser;
-
-    if (user == null) {
-      throw Exception('Nenhum usuário autenticado.');
-    }
-
-    if (user.emailVerified) {
-      return;
-    }
-
-    await _auth.setLanguageCode('pt-BR');
-    await user.sendEmailVerification();
-  }
-
-  // ATUALIZA OS DADOS DO USUÁRIO
-  Future<void> reloadCurrentUser() async {
-    await _auth.currentUser?.reload();
-  }
-
-  // CADASTRO
   Future<void> register({
     required String name,
     required String cpf,
@@ -122,7 +97,6 @@ class AuthRepository {
     }
   }
 
-  // LOGIN
   Future<UserCredential> signIn({
     required String email,
     required String password,
@@ -133,13 +107,99 @@ class AuthRepository {
     );
   }
 
-  // LOGOUT
   Future<void> signOut() async {
     await _auth.signOut();
   }
 
-  // RECUPERAÇÃO DE SENHA
   Future<void> sendPasswordResetEmail({required String email}) async {
     await _auth.sendPasswordResetEmail(email: email.trim().toLowerCase());
+  }
+
+  Future<void> sendEmailVerification() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    if (user.emailVerified) {
+      return;
+    }
+
+    await _auth.setLanguageCode('pt-BR');
+
+    await user.sendEmailVerification();
+  }
+
+  Future<void> reloadCurrentUser() async {
+    await _auth.currentUser?.reload();
+  }
+
+  Future<String?> getRegisteredPhone() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return null;
+    }
+
+    final document = await _firestore.collection('users').doc(user.uid).get();
+
+    final data = document.data();
+
+    if (data == null) {
+      return null;
+    }
+
+    return data['phone'] as String?;
+  }
+
+  Future<void> startPhoneVerification({
+    required String phoneNumber,
+    required void Function(PhoneAuthCredential credential)
+    verificationCompleted,
+    required void Function(FirebaseAuthException exception) verificationFailed,
+    required void Function(String verificationId, int? resendToken) codeSent,
+    required void Function(String verificationId) codeAutoRetrievalTimeout,
+    int? forceResendingToken,
+  }) async {
+    await _auth.setLanguageCode('pt-BR');
+
+    await _auth.verifyPhoneNumber(
+      phoneNumber: phoneNumber,
+      verificationCompleted: verificationCompleted,
+      verificationFailed: verificationFailed,
+      codeSent: codeSent,
+      codeAutoRetrievalTimeout: codeAutoRetrievalTimeout,
+      forceResendingToken: forceResendingToken,
+      timeout: const Duration(seconds: 60),
+    );
+  }
+
+  Future<void> linkPhoneCredential(PhoneAuthCredential credential) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
+      return;
+    }
+
+    await user.linkWithCredential(credential);
+
+    await user.reload();
+  }
+
+  Future<void> confirmPhoneCode({
+    required String verificationId,
+    required String smsCode,
+  }) async {
+    final credential = PhoneAuthProvider.credential(
+      verificationId: verificationId,
+      smsCode: smsCode,
+    );
+
+    await linkPhoneCredential(credential);
   }
 }
