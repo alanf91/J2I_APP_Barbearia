@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
 import 'package:j2i_app_barbearia/features/auth/presentation/pages/login_page.dart';
-import 'package:j2i_app_barbearia/features/auth/presentation/pages/verify_email_page.dart';
 import 'package:j2i_app_barbearia/features/home/presentation/pages/home_page.dart';
 
 class AuthGatePage extends StatefulWidget {
@@ -19,7 +18,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: _authRepository.userChanges(),
+      stream: _authRepository.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -27,20 +26,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
           );
         }
 
-        final user = snapshot.data;
-
-        // NÃO LOGADO
-        if (user == null) {
-          return const LoginPage();
+        if (snapshot.hasData) {
+          return HomePage();
         }
 
-        // LOGADO, MAS E-MAIL NÃO CONFIRMADO
-        if (!user.emailVerified) {
-          return const VerifyEmailPage();
-        }
-
-        // LOGADO E E-MAIL CONFIRMADO
-        return HomePage();
+        return const LoginPage();
       },
     );
   }

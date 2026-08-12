@@ -21,6 +21,32 @@ class AuthRepository {
     return _auth.authStateChanges();
   }
 
+  // MONITORA ALTERAÇÕES DO USUÁRIO
+  Stream<User?> userChanges() {
+    return _auth.userChanges();
+  }
+
+  // ENVIA E-MAIL DE VERIFICAÇÃO
+  Future<void> sendEmailVerification() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    if (user.emailVerified) {
+      return;
+    }
+
+    await _auth.setLanguageCode('pt-BR');
+    await user.sendEmailVerification();
+  }
+
+  // ATUALIZA OS DADOS DO USUÁRIO
+  Future<void> reloadCurrentUser() async {
+    await _auth.currentUser?.reload();
+  }
+
   // CADASTRO
   Future<void> register({
     required String name,

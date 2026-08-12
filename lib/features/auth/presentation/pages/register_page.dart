@@ -67,21 +67,15 @@ class _RegisterPageState extends State<RegisterPage> {
 
       if (!mounted) return;
 
-ScaffoldMessenger.of(context).showSnackBar(
-  const SnackBar(
-    content: Text('Cadastro realizado com sucesso!'),
-  ),
-);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cadastro realizado com sucesso!')),
+      );
 
-await Future.delayed(
-  const Duration(milliseconds: 500),
-);
+      await Future.delayed(const Duration(milliseconds: 500));
 
-if (!mounted) return;
+      if (!mounted) return;
 
-Navigator.of(context).pop();
-
-    
+      Navigator.of(context).pop();
     } on InvalidCpfException {
       if (!mounted) return;
 
@@ -143,17 +137,6 @@ Navigator.of(context).pop();
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  void _clearForm() {
-    _nameController.clear();
-    _cpfController.clear();
-    _emailController.clear();
-    _phoneController.clear();
-    _passwordController.clear();
-    _confirmPasswordController.clear();
-
-    setState(() {});
   }
 
   @override

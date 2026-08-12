@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:j2i_app_barbearia/features/auth/presentation/pages/auth_gate.dart';
+import 'package:j2i_app_barbearia/features/auth/presentation/pages/auth_gate_page.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
