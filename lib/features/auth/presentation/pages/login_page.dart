@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
 import 'package:j2i_app_barbearia/features/auth/presentation/pages/register_page.dart';
+import 'package:j2i_app_barbearia/features/auth/presentation/pages/forgot_password_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -206,6 +207,26 @@ class _LoginPageState extends State<LoginPage> {
                     return null;
                   },
                 ),
+
+                const SizedBox(height: 4),
+
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _isLoading
+                        ? null
+                        : () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const ForgotPasswordPage(),
+                              ),
+                            );
+                          },
+                    child: const Text('Esqueci minha senha'),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
 
                 const SizedBox(height: 28),
 

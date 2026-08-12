@@ -16,7 +16,7 @@ class AuthRepository {
   // USUÁRIO ATUAL
   User? get currentUser => _auth.currentUser;
 
-  // MONITORA LOGIN / LOGOUT
+  // MONITORA LOGIN E LOGOUT
   Stream<User?> authStateChanges() {
     return _auth.authStateChanges();
   }
@@ -110,5 +110,10 @@ class AuthRepository {
   // LOGOUT
   Future<void> signOut() async {
     await _auth.signOut();
+  }
+
+  // RECUPERAÇÃO DE SENHA
+  Future<void> sendPasswordResetEmail({required String email}) async {
+    await _auth.sendPasswordResetEmail(email: email.trim().toLowerCase());
   }
 }
