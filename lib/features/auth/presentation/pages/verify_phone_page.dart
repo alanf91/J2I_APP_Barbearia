@@ -188,6 +188,12 @@ class _VerifyPhonePageState extends State<VerifyPhonePage> {
   }
 
   void _handleFirebaseError(FirebaseAuthException exception) {
+    debugPrint(
+      'PHONE AUTH ERROR -> '
+      'code: ${exception.code} | '
+      'message: ${exception.message}',
+    );
+
     String message;
 
     switch (exception.code) {
@@ -224,7 +230,9 @@ class _VerifyPhonePageState extends State<VerifyPhonePage> {
         break;
 
       default:
-        message = 'Não foi possível verificar o telefone.';
+        message =
+            'Erro Firebase: ${exception.code}\n'
+            '${exception.message ?? ''}';
     }
 
     _showMessage(message);

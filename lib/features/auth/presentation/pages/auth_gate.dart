@@ -6,6 +6,7 @@ import 'package:j2i_app_barbearia/features/auth/presentation/pages/login_page.da
 import 'package:j2i_app_barbearia/features/auth/presentation/pages/verify_email_page.dart';
 import 'package:j2i_app_barbearia/features/auth/presentation/pages/verify_phone_page.dart';
 import 'package:j2i_app_barbearia/features/home/presentation/pages/home_page.dart';
+import 'package:j2i_app_barbearia/core/widgets/device_registration_gate.dart';
 
 class AuthGatePage extends StatefulWidget {
   const AuthGatePage({super.key});
@@ -46,7 +47,10 @@ class _AuthGatePageState extends State<AuthGatePage> {
         }
 
         // 4. E-mail e telefone confirmados.
-        return HomePage();
+        return DeviceRegistrationGate(
+          key: ValueKey(user.uid),
+          child: HomePage(),
+        );
       },
     );
   }
