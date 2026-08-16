@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
 import 'package:j2i_app_barbearia/features/auth/presentation/pages/register_page.dart';
 import 'package:j2i_app_barbearia/features/auth/presentation/pages/forgot_password_page.dart';
+import 'package:j2i_app_barbearia/features/auth/presentation/pages/mfa_sign_in_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -52,6 +53,18 @@ class _LoginPageState extends State<LoginPage> {
 
       // Não precisamos navegar manualmente.
       // AuthGate detectará que o usuário entrou.
+    } on FirebaseAuthMultiFactorException catch (e) {
+  if (!mounted) return;
+
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => MfaSignInPage(
+        resolver: e.resolver,
+      ),
+    ),
+  );
+
+
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 

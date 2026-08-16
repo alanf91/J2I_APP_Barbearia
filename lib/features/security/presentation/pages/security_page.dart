@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:j2i_app_barbearia/core/models/registered_device.dart';
 import 'package:j2i_app_barbearia/core/repositories/device_repository.dart';
+import 'package:j2i_app_barbearia/features/security/presentation/pages/mfa_enrollment_page.dart';
 
 class SecurityPage extends StatefulWidget {
   const SecurityPage({super.key});
@@ -161,6 +162,22 @@ class _SecurityPageState extends State<SecurityPage> {
                     'já acessaram sua conta.',
                     textAlign: TextAlign.center,
                   ),
+
+                  const SizedBox(height: 24),
+
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const MfaEnrollmentPage(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.verified_user_outlined),
+                    label: const Text('VERIFICAÇÃO EM DUAS ETAPAS'),
+                  ),
+
+                  const SizedBox(height: 32),
 
                   const SizedBox(height: 32),
 
