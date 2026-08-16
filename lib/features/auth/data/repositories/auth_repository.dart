@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:j2i_app_barbearia/core/constants/user_roles.dart';
 import 'package:j2i_app_barbearia/core/errors/auth_exceptions.dart';
 import 'package:j2i_app_barbearia/core/utils/cpf_validator.dart';
 import 'package:j2i_app_barbearia/features/auth/data/models/user_profile.dart';
@@ -9,11 +10,9 @@ class AuthRepository {
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
 
-  AuthRepository({
-    FirebaseAuth? auth,
-    FirebaseFirestore? firestore,
-  })  : _auth = auth ?? FirebaseAuth.instance,
-        _firestore = firestore ?? FirebaseFirestore.instance;
+  AuthRepository({FirebaseAuth? auth, FirebaseFirestore? firestore})
+    : _auth = auth ?? FirebaseAuth.instance,
+      _firestore = firestore ?? FirebaseFirestore.instance;
 
   User? get currentUser => _auth.currentUser;
 
@@ -57,14 +56,10 @@ class AuthRepository {
       final user = credential.user;
 
       if (user == null) {
-        throw Exception(
-          'Não foi possível criar o usuário.',
-        );
+        throw Exception('Não foi possível criar o usuário.');
       }
 
-      await user.updateDisplayName(
-        name.trim(),
-      );
+      await user.updateDisplayName(name.trim());
 
       final profile = UserProfile(
         uid: user.uid,
@@ -72,13 +67,11 @@ class AuthRepository {
         cpf: normalizedCpf,
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
-        role: 'client',
+        role: UserRoles.client,
         createdAt: Timestamp.now(),
       );
 
-      final userReference = _firestore
-          .collection('users')
-          .doc(user.uid);
+      final userReference = _firestore.collection('users').doc(user.uid);
 
       final cpfReference = _firestore
           .collection('cpf_registry')
@@ -86,18 +79,12 @@ class AuthRepository {
 
       final batch = _firestore.batch();
 
-      batch.set(
-        cpfReference,
-        {
-          'uid': user.uid,
-          'createdAt': FieldValue.serverTimestamp(),
-        },
-      );
+      batch.set(cpfReference, {
+        'uid': user.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
 
-      batch.set(
-        userReference,
-        profile.toMap(),
-      );
+      batch.set(userReference, profile.toMap());
 
       try {
         await batch.commit();
@@ -141,12 +128,8 @@ class AuthRepository {
   // REDEFINIÇÃO DE SENHA
   // ============================================================
 
-  Future<void> sendPasswordResetEmail({
-    required String email,
-  }) async {
-    await _auth.sendPasswordResetEmail(
-      email: email.trim().toLowerCase(),
-    );
+  Future<void> sendPasswordResetEmail({required String email}) async {
+    await _auth.sendPasswordResetEmail(email: email.trim().toLowerCase());
   }
 
   // ============================================================
@@ -157,9 +140,7 @@ class AuthRepository {
     final user = _auth.currentUser;
 
     if (user == null) {
-      throw Exception(
-        'Nenhum usuário autenticado.',
-      );
+      throw Exception('Nenhum usuário autenticado.');
     }
 
     if (user.emailVerified) {
@@ -186,10 +167,7 @@ class AuthRepository {
       return null;
     }
 
-    final document = await _firestore
-        .collection('users')
-        .doc(user.uid)
-        .get();
+    final document = await _firestore.collection('users').doc(user.uid).get();
 
     final data = document.data();
 
@@ -206,59 +184,38 @@ class AuthRepository {
 
   Future<void> startPhoneVerification({
     required String phoneNumber,
-    required void Function(
-      PhoneAuthCredential credential,
-    ) verificationCompleted,
-    required void Function(
-      FirebaseAuthException exception,
-    ) verificationFailed,
-    required void Function(
-      String verificationId,
-      int? resendToken,
-    ) codeSent,
-    required void Function(
-      String verificationId,
-    ) codeAutoRetrievalTimeout,
+    required void Function(PhoneAuthCredential credential)
+    verificationCompleted,
+    required void Function(FirebaseAuthException exception) verificationFailed,
+    required void Function(String verificationId, int? resendToken) codeSent,
+    required void Function(String verificationId) codeAutoRetrievalTimeout,
     int? forceResendingToken,
   }) async {
     await _auth.setLanguageCode('pt-BR');
 
     await _auth.verifyPhoneNumber(
       phoneNumber: phoneNumber,
-      verificationCompleted:
-          verificationCompleted,
-      verificationFailed:
-          verificationFailed,
+      verificationCompleted: verificationCompleted,
+      verificationFailed: verificationFailed,
       codeSent: codeSent,
-      codeAutoRetrievalTimeout:
-          codeAutoRetrievalTimeout,
-      forceResendingToken:
-          forceResendingToken,
-      timeout: const Duration(
-        seconds: 60,
-      ),
+      codeAutoRetrievalTimeout: codeAutoRetrievalTimeout,
+      forceResendingToken: forceResendingToken,
+      timeout: const Duration(seconds: 60),
     );
   }
 
-  Future<void> linkPhoneCredential(
-    PhoneAuthCredential credential,
-  ) async {
+  Future<void> linkPhoneCredential(PhoneAuthCredential credential) async {
     final user = _auth.currentUser;
 
     if (user == null) {
-      throw Exception(
-        'Nenhum usuário autenticado.',
-      );
+      throw Exception('Nenhum usuário autenticado.');
     }
 
-    if (user.phoneNumber != null &&
-        user.phoneNumber!.isNotEmpty) {
+    if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
       return;
     }
 
-    await user.linkWithCredential(
-      credential,
-    );
+    await user.linkWithCredential(credential);
 
     await user.reload();
   }
@@ -267,63 +224,47 @@ class AuthRepository {
     required String verificationId,
     required String smsCode,
   }) async {
-    final credential =
-        PhoneAuthProvider.credential(
+    final credential = PhoneAuthProvider.credential(
       verificationId: verificationId,
       smsCode: smsCode,
     );
 
-    await linkPhoneCredential(
-      credential,
-    );
+    await linkPhoneCredential(credential);
   }
 
   // ============================================================
   // MFA - CONSULTA / REAUTENTICAÇÃO
   // ============================================================
 
-  Future<List<MultiFactorInfo>>
-      getEnrolledFactors() async {
+  Future<List<MultiFactorInfo>> getEnrolledFactors() async {
     final user = _auth.currentUser;
 
     if (user == null) {
-      throw Exception(
-        'Nenhum usuário autenticado.',
-      );
+      throw Exception('Nenhum usuário autenticado.');
     }
 
-    return user.multiFactor
-        .getEnrolledFactors();
+    return user.multiFactor.getEnrolledFactors();
   }
 
   Future<bool> hasMfaEnabled() async {
-    final factors =
-        await getEnrolledFactors();
+    final factors = await getEnrolledFactors();
 
     return factors.isNotEmpty;
   }
 
-  Future<void> reauthenticateWithPassword({
-    required String password,
-  }) async {
+  Future<void> reauthenticateWithPassword({required String password}) async {
     final user = _auth.currentUser;
 
-    if (user == null ||
-        user.email == null) {
-      throw Exception(
-        'Nenhum usuário autenticado.',
-      );
+    if (user == null || user.email == null) {
+      throw Exception('Nenhum usuário autenticado.');
     }
 
-    final credential =
-        EmailAuthProvider.credential(
+    final credential = EmailAuthProvider.credential(
       email: user.email!,
       password: password,
     );
 
-    await user.reauthenticateWithCredential(
-      credential,
-    );
+    await user.reauthenticateWithCredential(credential);
   }
 
   // ============================================================
@@ -332,53 +273,34 @@ class AuthRepository {
 
   Future<void> startMfaEnrollment({
     required String phoneNumber,
-    required void Function(
-      PhoneAuthCredential credential,
-    ) verificationCompleted,
-    required void Function(
-      FirebaseAuthException exception,
-    ) verificationFailed,
-    required void Function(
-      String verificationId,
-      int? resendToken,
-    ) codeSent,
-    required void Function(
-      String verificationId,
-    ) codeAutoRetrievalTimeout,
+    required void Function(PhoneAuthCredential credential)
+    verificationCompleted,
+    required void Function(FirebaseAuthException exception) verificationFailed,
+    required void Function(String verificationId, int? resendToken) codeSent,
+    required void Function(String verificationId) codeAutoRetrievalTimeout,
   }) async {
     final user = _auth.currentUser;
 
     if (user == null) {
-      throw Exception(
-        'Nenhum usuário autenticado.',
-      );
+      throw Exception('Nenhum usuário autenticado.');
     }
 
     if (!user.emailVerified) {
-      throw Exception(
-        'O e-mail precisa estar confirmado.',
-      );
+      throw Exception('O e-mail precisa estar confirmado.');
     }
 
-    final multiFactorSession =
-        await user.multiFactor.getSession();
+    final multiFactorSession = await user.multiFactor.getSession();
 
     await _auth.setLanguageCode('pt-BR');
 
     await _auth.verifyPhoneNumber(
-      multiFactorSession:
-          multiFactorSession,
+      multiFactorSession: multiFactorSession,
       phoneNumber: phoneNumber,
-      verificationCompleted:
-          verificationCompleted,
-      verificationFailed:
-          verificationFailed,
+      verificationCompleted: verificationCompleted,
+      verificationFailed: verificationFailed,
       codeSent: codeSent,
-      codeAutoRetrievalTimeout:
-          codeAutoRetrievalTimeout,
-      timeout: const Duration(
-        seconds: 60,
-      ),
+      codeAutoRetrievalTimeout: codeAutoRetrievalTimeout,
+      timeout: const Duration(seconds: 60),
     );
   }
 
@@ -389,26 +311,17 @@ class AuthRepository {
     final user = _auth.currentUser;
 
     if (user == null) {
-      throw Exception(
-        'Nenhum usuário autenticado.',
-      );
+      throw Exception('Nenhum usuário autenticado.');
     }
 
-    final credential =
-        PhoneAuthProvider.credential(
+    final credential = PhoneAuthProvider.credential(
       verificationId: verificationId,
       smsCode: smsCode,
     );
 
-    final assertion =
-        PhoneMultiFactorGenerator
-            .getAssertion(
-      credential,
-    );
+    final assertion = PhoneMultiFactorGenerator.getAssertion(credential);
 
-    await user.multiFactor.enroll(
-      assertion,
-    );
+    await user.multiFactor.enroll(assertion);
   }
 
   // ============================================================
@@ -418,36 +331,22 @@ class AuthRepository {
   Future<void> startMfaSignIn({
     required MultiFactorResolver resolver,
     required PhoneMultiFactorInfo hint,
-    required void Function(
-      PhoneAuthCredential credential,
-    ) verificationCompleted,
-    required void Function(
-      FirebaseAuthException exception,
-    ) verificationFailed,
-    required void Function(
-      String verificationId,
-      int? resendToken,
-    ) codeSent,
-    required void Function(
-      String verificationId,
-    ) codeAutoRetrievalTimeout,
+    required void Function(PhoneAuthCredential credential)
+    verificationCompleted,
+    required void Function(FirebaseAuthException exception) verificationFailed,
+    required void Function(String verificationId, int? resendToken) codeSent,
+    required void Function(String verificationId) codeAutoRetrievalTimeout,
   }) async {
     await _auth.setLanguageCode('pt-BR');
 
     await _auth.verifyPhoneNumber(
-      multiFactorSession:
-          resolver.session,
+      multiFactorSession: resolver.session,
       multiFactorInfo: hint,
-      verificationCompleted:
-          verificationCompleted,
-      verificationFailed:
-          verificationFailed,
+      verificationCompleted: verificationCompleted,
+      verificationFailed: verificationFailed,
       codeSent: codeSent,
-      codeAutoRetrievalTimeout:
-          codeAutoRetrievalTimeout,
-      timeout: const Duration(
-        seconds: 60,
-      ),
+      codeAutoRetrievalTimeout: codeAutoRetrievalTimeout,
+      timeout: const Duration(seconds: 60),
     );
   }
 
@@ -456,20 +355,76 @@ class AuthRepository {
     required String verificationId,
     required String smsCode,
   }) async {
-    final credential =
-        PhoneAuthProvider.credential(
+    final credential = PhoneAuthProvider.credential(
       verificationId: verificationId,
       smsCode: smsCode,
     );
 
-    final assertion =
-        PhoneMultiFactorGenerator
-            .getAssertion(
-      credential,
-    );
+    final assertion = PhoneMultiFactorGenerator.getAssertion(credential);
 
-    return resolver.resolveSignIn(
-      assertion,
-    );
+    return resolver.resolveSignIn(assertion);
+  }
+
+  // ============================================================
+  // PERFIL DE ACESSO / ROLE
+  // ============================================================
+
+  Future<String> getCurrentUserRole() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    final document = await _firestore.collection('users').doc(user.uid).get();
+
+    if (!document.exists) {
+      throw Exception('Perfil do usuário não encontrado.');
+    }
+
+    final data = document.data();
+
+    if (data == null) {
+      throw Exception('Dados do usuário não encontrados.');
+    }
+
+    final role = data['role'] as String?;
+
+    if (role == UserRoles.client) {
+      return UserRoles.client;
+    }
+
+    if (role == UserRoles.admin) {
+      return UserRoles.admin;
+    }
+
+    throw Exception('Perfil de acesso inválido.');
+  }
+  // ============================================================
+  // NOME DO USUÁRIO
+  // ============================================================
+
+  Future<String?> getCurrentUserName() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return null;
+    }
+
+    final document = await _firestore.collection('users').doc(user.uid).get();
+
+    final data = document.data();
+
+    if (data == null) {
+      return null;
+    }
+
+    final name = data['name'] as String?;
+
+    if (name == null || name.trim().isEmpty) {
+      return null;
+    }
+
+    return name.trim();
   }
 }

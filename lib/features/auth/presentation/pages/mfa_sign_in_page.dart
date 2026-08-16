@@ -7,18 +7,13 @@ import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repositor
 class MfaSignInPage extends StatefulWidget {
   final MultiFactorResolver resolver;
 
-  const MfaSignInPage({
-    super.key,
-    required this.resolver,
-  });
+  const MfaSignInPage({super.key, required this.resolver});
 
   @override
-  State<MfaSignInPage> createState() =>
-      _MfaSignInPageState();
+  State<MfaSignInPage> createState() => _MfaSignInPageState();
 }
 
-class _MfaSignInPageState
-    extends State<MfaSignInPage> {
+class _MfaSignInPageState extends State<MfaSignInPage> {
   final _authRepository = AuthRepository();
   final _codeController = TextEditingController();
 
@@ -48,9 +43,7 @@ class _MfaSignInPageState
     final hint = _phoneHint;
 
     if (hint == null) {
-      _showMessage(
-        'Nenhum telefone de segurança foi encontrado.',
-      );
+      _showMessage('Nenhum telefone de segurança foi encontrado.');
       return;
     }
 
@@ -62,10 +55,8 @@ class _MfaSignInPageState
       await _authRepository.startMfaSignIn(
         resolver: widget.resolver,
         hint: hint,
-        verificationCompleted:
-            (_) {},
-        verificationFailed:
-            (FirebaseAuthException e) {
+        verificationCompleted: (_) {},
+        verificationFailed: (FirebaseAuthException e) {
           if (!mounted) return;
 
           setState(() {
@@ -74,30 +65,22 @@ class _MfaSignInPageState
 
           _handleFirebaseError(e);
         },
-        codeSent: (
-          String verificationId,
-          int? resendToken,
-        ) {
+        codeSent: (String verificationId, int? resendToken) {
           if (!mounted) return;
 
           setState(() {
-            _verificationId =
-                verificationId;
+            _verificationId = verificationId;
             _codeSent = true;
             _isSending = false;
           });
 
-          _showMessage(
-            'Código de segurança enviado.',
-          );
+          _showMessage('Código de segurança enviado.');
         },
-        codeAutoRetrievalTimeout:
-            (String verificationId) {
+        codeAutoRetrievalTimeout: (String verificationId) {
           if (!mounted) return;
 
           setState(() {
-            _verificationId =
-                verificationId;
+            _verificationId = verificationId;
             _isSending = false;
           });
         },
@@ -117,30 +100,22 @@ class _MfaSignInPageState
         _isSending = false;
       });
 
-      _showMessage(
-        'Não foi possível enviar o código.',
-      );
+      _showMessage('Não foi possível enviar o código.');
     }
   }
 
   Future<void> _confirmCode() async {
-    final verificationId =
-        _verificationId;
+    final verificationId = _verificationId;
 
-    final code =
-        _codeController.text.trim();
+    final code = _codeController.text.trim();
 
     if (verificationId == null) {
-      _showMessage(
-        'Solicite o código primeiro.',
-      );
+      _showMessage('Solicite o código primeiro.');
       return;
     }
 
     if (code.length != 6) {
-      _showMessage(
-        'Informe o código de 6 dígitos.',
-      );
+      _showMessage('Informe o código de 6 dígitos.');
       return;
     }
 
@@ -151,16 +126,13 @@ class _MfaSignInPageState
     try {
       await _authRepository.completeMfaSignIn(
         resolver: widget.resolver,
-        verificationId:
-            verificationId,
+        verificationId: verificationId,
         smsCode: code,
       );
 
       if (!mounted) return;
 
-      _showMessage(
-        'Login confirmado com sucesso!',
-      );
+      _showMessage('Login confirmado com sucesso!');
 
       Navigator.of(context).pop();
     } on FirebaseAuthException catch (e) {
@@ -176,86 +148,61 @@ class _MfaSignInPageState
     }
   }
 
-  void _handleFirebaseError(
-    FirebaseAuthException exception,
-  ) {
+  void _handleFirebaseError(FirebaseAuthException exception) {
     String message;
 
     switch (exception.code) {
       case 'invalid-verification-code':
-        message =
-            'O código informado é inválido.';
+        message = 'O código informado é inválido.';
         break;
 
       case 'session-expired':
-        message =
-            'O código expirou. Solicite outro.';
+        message = 'O código expirou. Solicite outro.';
         break;
 
       case 'too-many-requests':
-        message =
-            'Muitas tentativas. Aguarde e tente novamente.';
+        message = 'Muitas tentativas. Aguarde e tente novamente.';
         break;
 
       case 'network-request-failed':
-        message =
-            'Verifique sua conexão com a internet.';
+        message = 'Verifique sua conexão com a internet.';
         break;
 
       default:
-        message =
-            'Erro Firebase: ${exception.code}';
+        message = 'Erro Firebase: ${exception.code}';
     }
 
     _showMessage(message);
   }
 
-  void _showMessage(
-    String message,
-  ) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-      ),
-    );
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final phone =
-        _phoneHint?.phoneNumber ?? '';
+    final phone = _phoneHint?.phoneNumber ?? '';
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Verificação de segurança',
-        ),
-      ),
+      appBar: AppBar(title: const Text('Verificação de segurança')),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding:
-              const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
           child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 32),
 
-              const Icon(
-                Icons.phonelink_lock_outlined,
-                size: 80,
-              ),
+              const Icon(Icons.phonelink_lock_outlined, size: 80),
 
               const SizedBox(height: 24),
 
               const Text(
                 'Confirme que é você',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight:
-                      FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
               ),
 
               const SizedBox(height: 12),
@@ -271,84 +218,51 @@ class _MfaSignInPageState
               if (phone.isNotEmpty)
                 Text(
                   'Telefone de segurança: $phone',
-                  textAlign:
-                      TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
 
               const SizedBox(height: 32),
 
               if (!_codeSent)
                 FilledButton.icon(
-                  onPressed:
-                      _isSending
-                          ? null
-                          : _sendCode,
-                  icon: const Icon(
-                    Icons.sms_outlined,
-                  ),
-                  label: Text(
-                    _isSending
-                        ? 'ENVIANDO...'
-                        : 'ENVIAR CÓDIGO',
-                  ),
+                  onPressed: _isSending ? null : _sendCode,
+                  icon: const Icon(Icons.sms_outlined),
+                  label: Text(_isSending ? 'ENVIANDO...' : 'ENVIAR CÓDIGO'),
                 ),
 
               if (_codeSent) ...[
                 TextField(
-                  controller:
-                      _codeController,
-                  keyboardType:
-                      TextInputType.number,
+                  controller: _codeController,
+                  keyboardType: TextInputType.number,
                   maxLength: 6,
                   inputFormatters: [
-                    FilteringTextInputFormatter
-                        .digitsOnly,
-                    LengthLimitingTextInputFormatter(
-                      6,
-                    ),
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
                   ],
-                  decoration:
-                      const InputDecoration(
-                    labelText:
-                        'Código de segurança',
+                  decoration: const InputDecoration(
+                    labelText: 'Código de segurança',
                     hintText: '123456',
                     counterText: '',
-                    border:
-                        OutlineInputBorder(),
-                    prefixIcon: Icon(
-                      Icons.lock_outline,
-                    ),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.lock_outline),
                   ),
                 ),
 
                 const SizedBox(height: 20),
 
                 FilledButton(
-                  onPressed:
-                      _isConfirming
-                          ? null
-                          : _confirmCode,
+                  onPressed: _isConfirming ? null : _confirmCode,
                   child: Text(
-                    _isConfirming
-                        ? 'CONFIRMANDO...'
-                        : 'CONFIRMAR LOGIN',
+                    _isConfirming ? 'CONFIRMANDO...' : 'CONFIRMAR LOGIN',
                   ),
                 ),
 
                 const SizedBox(height: 12),
 
                 TextButton(
-                  onPressed:
-                      _isSending
-                          ? null
-                          : _sendCode,
-                  child: const Text(
-                    'Reenviar código',
-                  ),
+                  onPressed: _isSending ? null : _sendCode,
+                  child: const Text('Reenviar código'),
                 ),
               ],
             ],

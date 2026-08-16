@@ -54,17 +54,11 @@ class _LoginPageState extends State<LoginPage> {
       // Não precisamos navegar manualmente.
       // AuthGate detectará que o usuário entrou.
     } on FirebaseAuthMultiFactorException catch (e) {
-  if (!mounted) return;
+      if (!mounted) return;
 
-  await Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (_) => MfaSignInPage(
-        resolver: e.resolver,
-      ),
-    ),
-  );
-
-
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => MfaSignInPage(resolver: e.resolver)),
+      );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 

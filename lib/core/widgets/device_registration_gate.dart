@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:j2i_app_barbearia/core/repositories/device_repository.dart';
+import 'package:j2i_app_barbearia/features/security/presentation/pages/new_device_page.dart';
 
 class DeviceRegistrationGate extends StatefulWidget {
   final Widget child;
@@ -15,6 +16,8 @@ class _DeviceRegistrationGateState extends State<DeviceRegistrationGate> {
   final _deviceRepository = DeviceRepository();
 
   late Future<DeviceRegistrationResult> _registrationFuture;
+
+  bool _newDeviceAcknowledged = false;
 
   @override
   void initState() {
@@ -39,7 +42,15 @@ class _DeviceRegistrationGateState extends State<DeviceRegistrationGate> {
 
   void _retry() {
     setState(() {
+      _newDeviceAcknowledged = false;
+
       _registrationFuture = _registerDevice();
+    });
+  }
+
+  void _continueFromNewDevice() {
+    setState(() {
+      _newDeviceAcknowledged = true;
     });
   }
 
@@ -55,7 +66,10 @@ class _DeviceRegistrationGateState extends State<DeviceRegistrationGate> {
         }
 
         if (snapshot.hasError) {
-          debugPrint('DEVICE REGISTRATION ERROR -> ${snapshot.error}');
+          debugPrint(
+            'DEVICE REGISTRATION ERROR -> '
+            '${snapshot.error}',
+          );
 
           if (snapshot.stackTrace != null) {
             debugPrintStack(stackTrace: snapshot.stackTrace);
@@ -70,21 +84,29 @@ class _DeviceRegistrationGateState extends State<DeviceRegistrationGate> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Icon(Icons.phonelink_lock_outlined, size: 72),
+
                     const SizedBox(height: 24),
+
                     const Text(
-                      'Não foi possível validar este dispositivo.',
+                      'Não foi possível validar '
+                      'este dispositivo.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
+
                     const SizedBox(height: 12),
+
                     const Text(
-                      'Verifique sua conexão e tente novamente.',
+                      'Verifique sua conexão e '
+                      'tente novamente.',
                       textAlign: TextAlign.center,
                     ),
+
                     const SizedBox(height: 24),
+
                     FilledButton.icon(
                       onPressed: _retry,
                       icon: const Icon(Icons.refresh),
@@ -97,6 +119,73 @@ class _DeviceRegistrationGateState extends State<DeviceRegistrationGate> {
           );
         }
 
+        final result = snapshot.data;
+
+        if (result == null) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        //
+        // DISPOSITIVO BLOQUEADO / REVOGADO
+        //
+        if (!result.isActive) {
+          return Scaffold(
+            appBar: AppBar(
+              automaticallyImplyLeading: false,
+              title: const Text('Acesso bloqueado'),
+            ),
+            body: const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.block, size: 80),
+
+                    SizedBox(height: 24),
+
+                    Text(
+                      'Este dispositivo não está '
+                      'autorizado a acessar esta '
+                      'conta.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    SizedBox(height: 12),
+
+                    Text(
+                      'Entre em contato com o '
+                      'suporte ou utilize outro '
+                      'dispositivo autorizado.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        //
+        // PRIMEIRO ACESSO DESTA INSTALAÇÃO
+        //
+        if (result.isNewDevice && !_newDeviceAcknowledged) {
+          return NewDevicePage(
+            device: result.device,
+            onContinue: _continueFromNewDevice,
+          );
+        }
+
+        //
+        // DISPOSITIVO CONHECIDO OU
+        // NOVO DISPOSITIVO JÁ CONFIRMADO
+        //
         return widget.child;
       },
     );
