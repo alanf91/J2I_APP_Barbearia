@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
 import 'package:j2i_app_barbearia/features/security/presentation/pages/security_page.dart';
+import 'package:j2i_app_barbearia/features/services/presentation/pages/services_page.dart';
 
 class ClientHomePage extends StatefulWidget {
   const ClientHomePage({super.key});
@@ -395,44 +396,9 @@ class _ServicesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SafeArea(
-      child: Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.content_cut_outlined, size: 80),
-
-              SizedBox(height: 20),
-
-              Text(
-                'Serviços',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-
-              SizedBox(height: 12),
-
-              Text(
-                'Aqui você poderá escolher cortes, barba e outros serviços.',
-                textAlign: TextAlign.center,
-              ),
-
-              SizedBox(height: 12),
-
-              Text(
-                'Na próxima etapa conectaremos esta tela ao Firestore.',
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    return const ServicesPage();
   }
 }
-
 // ============================================================
 // PERFIL
 // ============================================================
@@ -440,9 +406,7 @@ class _ServicesTab extends StatelessWidget {
 class _ProfileTab extends StatelessWidget {
   final String? userName;
   final String email;
-
   final VoidCallback onOpenSecurity;
-
   final Future<void> Function() onLogout;
 
   const _ProfileTab({
@@ -526,7 +490,6 @@ class _ProfileTab extends StatelessWidget {
     );
   }
 }
-
 // ============================================================
 // COMPONENTES
 // ============================================================
