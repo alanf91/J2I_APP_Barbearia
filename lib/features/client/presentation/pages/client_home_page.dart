@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'package:j2i_app_barbearia/features/appointments/data/models/barbershop_appointment.dart';
+import 'package:j2i_app_barbearia/features/appointments/data/repositories/appointment_repository.dart';
+import 'package:j2i_app_barbearia/features/appointments/presentation/pages/my_appointments_page.dart';
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
+import 'package:j2i_app_barbearia/features/profile/presentation/pages/client_profile_page.dart';
 import 'package:j2i_app_barbearia/features/security/presentation/pages/security_page.dart';
 import 'package:j2i_app_barbearia/features/services/presentation/pages/services_page.dart';
 
@@ -14,7 +18,11 @@ class ClientHomePage extends StatefulWidget {
 class _ClientHomePageState extends State<ClientHomePage> {
   final AuthRepository _authRepository = AuthRepository();
 
+  final AppointmentRepository _appointmentRepository = AppointmentRepository();
+
   late Future<String?> _userNameFuture;
+
+  late final Stream<List<BarbershopAppointment>> _appointmentsStream;
 
   int _selectedIndex = 0;
 
@@ -23,23 +31,50 @@ class _ClientHomePageState extends State<ClientHomePage> {
     super.initState();
 
     _userNameFuture = _authRepository.getCurrentUserName();
+
+    _appointmentsStream = _appointmentRepository.watchCurrentUserAppointments();
   }
+
+  // ============================================================
+  // NAVEGAÇÃO
+  // ============================================================
 
   void _changePage(int index) {
     setState(() {
       _selectedIndex = index;
+
+      // Quando o usuário volta para Início ou Perfil,
+      // buscamos o nome novamente no Firestore.
+      //
+      // Assim, se ele editar o nome no Perfil,
+      // a Home recebe o valor atualizado.
+      if (index == 0 || index == 3) {
+        _userNameFuture = _authRepository.getCurrentUserName();
+      }
     });
   }
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
 
   Future<void> _logout() async {
     await _authRepository.signOut();
   }
+
+  // ============================================================
+  // SEGURANÇA
+  // ============================================================
 
   void _openSecurity() {
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const SecurityPage()));
   }
+
+  // ============================================================
+  // TÍTULO DA APPBAR
+  // ============================================================
 
   String _getPageTitle() {
     switch (_selectedIndex) {
@@ -60,6 +95,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
+  // ============================================================
+  // BUILD PRINCIPAL
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
     final user = _authRepository.currentUser;
@@ -78,17 +117,33 @@ class _ClientHomePageState extends State<ClientHomePage> {
         final userName = snapshot.data?.trim();
 
         final pages = <Widget>[
+          // ======================================================
+          // INÍCIO
+          // ======================================================
           _HomeTab(
             userName: userName,
             email: email,
+            appointmentsStream: _appointmentsStream,
             onNavigate: _changePage,
             onOpenSecurity: _openSecurity,
           ),
-          const _AppointmentsTab(),
-          const _ServicesTab(),
-          _ProfileTab(
-            userName: userName,
-            email: email,
+
+          // ======================================================
+          // AGENDA
+          // ======================================================
+          const MyAppointmentsPage(),
+
+          // ======================================================
+          // SERVIÇOS
+          // ======================================================
+          const ServicesPage(),
+
+          // ======================================================
+          // PERFIL
+          // ======================================================
+          ClientProfilePage(
+            initialUserName: userName,
+            initialEmail: email,
             onOpenSecurity: _openSecurity,
             onLogout: _logout,
           ),
@@ -105,7 +160,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
               ),
             ],
           ),
+
           body: IndexedStack(index: _selectedIndex, children: pages),
+
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedIndex,
             onDestinationSelected: _changePage,
@@ -115,16 +172,19 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 selectedIcon: Icon(Icons.home),
                 label: 'Início',
               ),
+
               NavigationDestination(
                 icon: Icon(Icons.calendar_month_outlined),
                 selectedIcon: Icon(Icons.calendar_month),
                 label: 'Agenda',
               ),
+
               NavigationDestination(
                 icon: Icon(Icons.content_cut_outlined),
                 selectedIcon: Icon(Icons.content_cut),
                 label: 'Serviços',
               ),
+
               NavigationDestination(
                 icon: Icon(Icons.person_outline),
                 selectedIcon: Icon(Icons.person),
@@ -139,12 +199,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
 }
 
 // ============================================================
-// INÍCIO
+// HOME
 // ============================================================
 
 class _HomeTab extends StatelessWidget {
   final String? userName;
   final String email;
+
+  final Stream<List<BarbershopAppointment>> appointmentsStream;
 
   final void Function(int index) onNavigate;
 
@@ -153,9 +215,109 @@ class _HomeTab extends StatelessWidget {
   const _HomeTab({
     required this.userName,
     required this.email,
+    required this.appointmentsStream,
     required this.onNavigate,
     required this.onOpenSecurity,
   });
+
+  // ============================================================
+  // FORMATAR HORÁRIO
+  // ============================================================
+
+  String _formatTime(int minutes) {
+    final hour = minutes ~/ 60;
+
+    final minute = minutes % 60;
+
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minute.toString().padLeft(2, '0')}';
+  }
+
+  // ============================================================
+  // FORMATAR DATA
+  // ============================================================
+
+  String _formatDate(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+
+    final month = date.month.toString().padLeft(2, '0');
+
+    return '$day/$month/${date.year}';
+  }
+
+  // ============================================================
+  // DIA DA SEMANA
+  // ============================================================
+
+  String _weekdayName(DateTime date) {
+    switch (date.weekday) {
+      case DateTime.monday:
+        return 'Segunda-feira';
+
+      case DateTime.tuesday:
+        return 'Terça-feira';
+
+      case DateTime.wednesday:
+        return 'Quarta-feira';
+
+      case DateTime.thursday:
+        return 'Quinta-feira';
+
+      case DateTime.friday:
+        return 'Sexta-feira';
+
+      case DateTime.saturday:
+        return 'Sábado';
+
+      case DateTime.sunday:
+        return 'Domingo';
+
+      default:
+        return '';
+    }
+  }
+
+  // ============================================================
+  // FORMATAR PREÇO
+  // ============================================================
+
+  String _formatPrice(int priceCents) {
+    final reais = priceCents ~/ 100;
+
+    final cents = (priceCents % 100).toString().padLeft(2, '0');
+
+    return 'R\$ $reais,$cents';
+  }
+
+  // ============================================================
+  // ENCONTRAR PRÓXIMO AGENDAMENTO
+  // ============================================================
+
+  BarbershopAppointment? _findNextAppointment(
+    List<BarbershopAppointment> appointments,
+  ) {
+    final now = DateTime.now();
+
+    final upcoming = appointments
+        .where(
+          (appointment) =>
+              appointment.status == 'confirmed' &&
+              appointment.endAt.isAfter(now),
+        )
+        .toList();
+
+    upcoming.sort((a, b) => a.startAt.compareTo(b.startAt));
+
+    if (upcoming.isEmpty) {
+      return null;
+    }
+
+    return upcoming.first;
+  }
+
+  // ============================================================
+  // BUILD HOME
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -171,6 +333,9 @@ class _HomeTab extends StatelessWidget {
         children: [
           const SizedBox(height: 8),
 
+          // ======================================================
+          // SAUDAÇÃO
+          // ======================================================
           Text(
             firstName != null ? 'Olá, $firstName!' : 'Olá!',
             style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
@@ -188,6 +353,9 @@ class _HomeTab extends StatelessWidget {
 
           const SizedBox(height: 28),
 
+          // ======================================================
+          // AGENDAMENTO
+          // ======================================================
           const _SectionTitle(title: 'Agendamento'),
 
           const SizedBox(height: 12),
@@ -239,6 +407,9 @@ class _HomeTab extends StatelessWidget {
 
           const SizedBox(height: 28),
 
+          // ======================================================
+          // ACESSO RÁPIDO
+          // ======================================================
           const _SectionTitle(title: 'Acesso rápido'),
 
           const SizedBox(height: 12),
@@ -297,40 +468,120 @@ class _HomeTab extends StatelessWidget {
 
           const SizedBox(height: 30),
 
+          // ======================================================
+          // PRÓXIMO AGENDAMENTO
+          // ======================================================
           const _SectionTitle(title: 'Próximo agendamento'),
 
           const SizedBox(height: 12),
 
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Icon(Icons.event_available_outlined, size: 38),
+          StreamBuilder<List<BarbershopAppointment>>(
+            stream: appointmentsStream,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(28),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                );
+              }
 
-                  SizedBox(width: 16),
+              if (snapshot.hasError) {
+                debugPrint(
+                  'HOME APPOINTMENT ERROR -> '
+                  '${snapshot.error}',
+                );
 
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                return const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Row(
                       children: [
-                        Text(
-                          'Nenhum agendamento',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
+                        Icon(Icons.error_outline, size: 34),
+
+                        SizedBox(width: 14),
+
+                        Expanded(
+                          child: Text(
+                            'Não foi possível carregar seu próximo agendamento.',
                           ),
                         ),
-
-                        SizedBox(height: 4),
-
-                        Text('Seus próximos horários aparecerão aqui.'),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
+                );
+              }
+
+              final appointments = snapshot.data ?? [];
+
+              final nextAppointment = _findNextAppointment(appointments);
+
+              // ==================================================
+              // SEM AGENDAMENTO
+              // ==================================================
+
+              if (nextAppointment == null) {
+                return Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () {
+                      onNavigate(2);
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Row(
+                        children: [
+                          Icon(Icons.event_note_outlined, size: 38),
+
+                          SizedBox(width: 16),
+
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Nenhum agendamento',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+
+                                SizedBox(height: 4),
+
+                                Text(
+                                  'Você não possui próximos horários. Toque para agendar.',
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          Icon(Icons.chevron_right),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              // ==================================================
+              // PRÓXIMO AGENDAMENTO REAL
+              // ==================================================
+
+              return _NextAppointmentCard(
+                appointment: nextAppointment,
+                date: _formatDate(nextAppointment.startAt),
+                weekday: _weekdayName(nextAppointment.startAt),
+                time:
+                    '${_formatTime(nextAppointment.startMinutes)} às '
+                    '${_formatTime(nextAppointment.endMinutes)}',
+                price: _formatPrice(nextAppointment.priceCents),
+                onTap: () {
+                  onNavigate(1);
+                },
+              );
+            },
           ),
 
           const SizedBox(height: 30),
@@ -341,43 +592,119 @@ class _HomeTab extends StatelessWidget {
 }
 
 // ============================================================
-// MEUS AGENDAMENTOS
+// CARD DO PRÓXIMO AGENDAMENTO
 // ============================================================
 
-class _AppointmentsTab extends StatelessWidget {
-  const _AppointmentsTab();
+class _NextAppointmentCard extends StatelessWidget {
+  final BarbershopAppointment appointment;
+
+  final String weekday;
+  final String date;
+  final String time;
+  final String price;
+
+  final VoidCallback onTap;
+
+  const _NextAppointmentCard({
+    required this.appointment,
+    required this.weekday,
+    required this.date,
+    required this.time,
+    required this.price,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return const SafeArea(
-      child: Center(
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: const EdgeInsets.all(18),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.calendar_month_outlined, size: 80),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const CircleAvatar(
+                    radius: 26,
+                    child: Icon(Icons.event_available_outlined),
+                  ),
 
-              SizedBox(height: 20),
+                  const SizedBox(width: 14),
 
-              Text(
-                'Meus agendamentos',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appointment.serviceName,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        Text(appointment.professionalName),
+                      ],
+                    ),
+                  ),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'CONFIRMADO',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
               ),
 
-              SizedBox(height: 12),
+              const Divider(height: 28),
 
-              Text(
-                'Aqui serão exibidos seus próximos horários e seu histórico de atendimentos.',
-                textAlign: TextAlign.center,
+              _HomeAppointmentInfo(
+                icon: Icons.calendar_month_outlined,
+                text: '$weekday, $date',
               ),
 
-              SizedBox(height: 12),
+              const SizedBox(height: 10),
 
-              Text(
-                'Esta funcionalidade será construída nas próximas etapas.',
-                textAlign: TextAlign.center,
+              _HomeAppointmentInfo(icon: Icons.schedule_outlined, text: time),
+
+              const SizedBox(height: 10),
+
+              _HomeAppointmentInfo(icon: Icons.payments_outlined, text: price),
+
+              const SizedBox(height: 14),
+
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(
+                    'Ver detalhes',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+
+                  SizedBox(width: 4),
+
+                  Icon(Icons.chevron_right),
+                ],
               ),
             ],
           ),
@@ -388,110 +715,31 @@ class _AppointmentsTab extends StatelessWidget {
 }
 
 // ============================================================
-// SERVIÇOS
+// INFORMAÇÃO DO AGENDAMENTO NA HOME
 // ============================================================
 
-class _ServicesTab extends StatelessWidget {
-  const _ServicesTab();
+class _HomeAppointmentInfo extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _HomeAppointmentInfo({required this.icon, required this.text});
 
   @override
   Widget build(BuildContext context) {
-    return const ServicesPage();
-  }
-}
-// ============================================================
-// PERFIL
-// ============================================================
+    return Row(
+      children: [
+        Icon(icon, size: 20),
 
-class _ProfileTab extends StatelessWidget {
-  final String? userName;
-  final String email;
-  final VoidCallback onOpenSecurity;
-  final Future<void> Function() onLogout;
+        const SizedBox(width: 10),
 
-  const _ProfileTab({
-    required this.userName,
-    required this.email,
-    required this.onOpenSecurity,
-    required this.onLogout,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final name = userName?.trim();
-
-    final displayName = name != null && name.isNotEmpty ? name : 'Usuário';
-
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          const SizedBox(height: 20),
-
-          const CircleAvatar(radius: 48, child: Icon(Icons.person, size: 52)),
-
-          const SizedBox(height: 16),
-
-          Text(
-            displayName,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 6),
-
-          Text(email, textAlign: TextAlign.center),
-
-          const SizedBox(height: 32),
-
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: const Text('Dados pessoais'),
-                  subtitle: const Text('Nome, telefone e informações da conta'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Edição do perfil será implementada em uma próxima etapa.',
-                        ),
-                      ),
-                    );
-                  },
-                ),
-
-                const Divider(height: 1),
-
-                ListTile(
-                  leading: const Icon(Icons.security_outlined),
-                  title: const Text('Segurança'),
-                  subtitle: const Text('MFA e dispositivos'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: onOpenSecurity,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          OutlinedButton.icon(
-            onPressed: () async {
-              await onLogout();
-            },
-            icon: const Icon(Icons.logout),
-            label: const Text('SAIR DA CONTA'),
-          ),
-        ],
-      ),
+        Expanded(child: Text(text)),
+      ],
     );
   }
 }
+
 // ============================================================
-// COMPONENTES
+// TÍTULO DAS SEÇÕES
 // ============================================================
 
 class _SectionTitle extends StatelessWidget {
@@ -507,6 +755,10 @@ class _SectionTitle extends StatelessWidget {
     );
   }
 }
+
+// ============================================================
+// CARD DE ACESSO RÁPIDO
+// ============================================================
 
 class _QuickActionCard extends StatelessWidget {
   final IconData icon;

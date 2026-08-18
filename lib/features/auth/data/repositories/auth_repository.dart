@@ -427,4 +427,131 @@ class AuthRepository {
 
     return name.trim();
   }
+  // ============================================================
+  // PERFIL DO USUÁRIO
+  // ============================================================
+
+  Future<Map<String, dynamic>?> getCurrentUserProfileData() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return null;
+    }
+
+    final document = await _firestore.collection('users').doc(user.uid).get();
+
+    if (!document.exists) {
+      return null;
+    }
+
+    return document.data();
+  }
+
+  Future<void> updateCurrentUserName({required String name}) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    final normalizedName = name.trim();
+
+    if (normalizedName.length < 2) {
+      throw Exception('Informe um nome válido.');
+    }
+
+    if (normalizedName.length > 80) {
+      throw Exception('O nome informado é muito longo.');
+    }
+
+    await _firestore.collection('users').doc(user.uid).update({
+      'name': normalizedName,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Mantemos também o displayName do Firebase Auth
+    // sincronizado, mas o Firestore continua sendo
+    // nossa fonte principal para os dados do perfil.
+    try {
+      await user.updateDisplayName(normalizedName);
+    } on FirebaseAuthException {
+      // A alteração principal no Firestore já foi salva.
+    }
+  }
+  // ============================================================
+  // ALTERAÇÃO SEGURA DE E-MAIL
+  // ============================================================
+
+  Future<void> requestEmailChange({required String newEmail}) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    final normalizedEmail = newEmail.trim().toLowerCase();
+
+    if (normalizedEmail.isEmpty ||
+        !normalizedEmail.contains('@') ||
+        !normalizedEmail.contains('.')) {
+      throw Exception('Informe um e-mail válido.');
+    }
+
+    final currentEmail = user.email?.trim().toLowerCase();
+
+    if (currentEmail == normalizedEmail) {
+      throw Exception('O novo e-mail é igual ao e-mail atual.');
+    }
+
+    await _auth.setLanguageCode('pt-BR');
+
+    await user.verifyBeforeUpdateEmail(normalizedEmail);
+  }
+
+  // ============================================================
+  // SINCRONIZAR E-MAIL VERIFICADO COM FIRESTORE
+  // ============================================================
+
+  Future<bool> syncVerifiedEmailToFirestore({
+    required String expectedEmail,
+  }) async {
+    var user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Nenhum usuário autenticado.');
+    }
+
+    await user.reload();
+
+    user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Não foi possível atualizar os dados do usuário.');
+    }
+
+    await user.getIdToken(true);
+
+    await user.reload();
+
+    user = _auth.currentUser;
+
+    if (user == null) {
+      return false;
+    }
+
+    final authEmail = user.email?.trim().toLowerCase();
+
+    final normalizedExpected = expectedEmail.trim().toLowerCase();
+
+    if (authEmail == null || authEmail != normalizedExpected) {
+      return false;
+    }
+
+    await _firestore.collection('users').doc(user.uid).update({
+      'email': authEmail,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    return true;
+  }
 }
