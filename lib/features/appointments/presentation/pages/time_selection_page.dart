@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'package:j2i_app_barbearia/features/appointments/data/models/professional_availability.dart';
+import 'package:j2i_app_barbearia/features/appointments/data/repositories/appointment_repository.dart';
 import 'package:j2i_app_barbearia/features/appointments/data/repositories/availability_repository.dart';
+import 'package:j2i_app_barbearia/features/appointments/presentation/pages/appointment_summary_page.dart';
 import 'package:j2i_app_barbearia/features/professionals/data/models/professional.dart';
 import 'package:j2i_app_barbearia/features/services/data/models/barbershop_service.dart';
 
@@ -22,7 +24,10 @@ class TimeSelectionPage extends StatefulWidget {
 }
 
 class _TimeSelectionPageState extends State<TimeSelectionPage> {
-  final AvailabilityRepository _repository = AvailabilityRepository();
+  final AvailabilityRepository _availabilityRepository =
+      AvailabilityRepository();
+
+  final AppointmentRepository _appointmentRepository = AppointmentRepository();
 
   late Future<ProfessionalAvailability?> _availabilityFuture;
 
@@ -32,7 +37,7 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
   void initState() {
     super.initState();
 
-    _availabilityFuture = _repository.getAvailabilityForDate(
+    _availabilityFuture = _availabilityRepository.getAvailabilityForDate(
       professionalId: widget.professional.id,
       date: widget.date,
     );
@@ -40,6 +45,7 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
 
   String _formatTime(int minutes) {
     final hour = minutes ~/ 60;
+
     final minute = minutes % 60;
 
     return '${hour.toString().padLeft(2, '0')}:'
@@ -58,18 +64,25 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
     switch (date.weekday) {
       case DateTime.monday:
         return 'Segunda-feira';
+
       case DateTime.tuesday:
         return 'Terça-feira';
+
       case DateTime.wednesday:
         return 'Quarta-feira';
+
       case DateTime.thursday:
         return 'Quinta-feira';
+
       case DateTime.friday:
         return 'Sexta-feira';
+
       case DateTime.saturday:
         return 'Sábado';
+
       case DateTime.sunday:
         return 'Domingo';
+
       default:
         return '';
     }
@@ -112,7 +125,10 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
         '${_monthName(date.month)}';
   }
 
-  List<int> _generateAvailableTimes(ProfessionalAvailability availability) {
+  List<int> _generateAvailableTimes(
+    ProfessionalAvailability availability,
+    Set<int> occupiedSlots,
+  ) {
     if (!availability.enabled) {
       return [];
     }
@@ -136,12 +152,64 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
     var current = availability.startMinutes;
 
     while (current + serviceDuration <= availability.endMinutes) {
-      times.add(current);
+      final hasConflict = _hasOccupiedSlot(
+        startMinutes: current,
+        endMinutes: current + serviceDuration,
+        occupiedSlots: occupiedSlots,
+      );
+
+      final isPast = _isPastTime(current);
+
+      if (!hasConflict && !isPast) {
+        times.add(current);
+      }
 
       current += interval;
     }
 
     return times;
+  }
+
+  bool _hasOccupiedSlot({
+    required int startMinutes,
+    required int endMinutes,
+    required Set<int> occupiedSlots,
+  }) {
+    var current = startMinutes;
+
+    while (current < endMinutes) {
+      if (occupiedSlots.contains(current)) {
+        return true;
+      }
+
+      current += AppointmentRepository.bookingSlotMinutes;
+    }
+
+    return false;
+  }
+
+  bool _isPastTime(int startMinutes) {
+    final now = DateTime.now();
+
+    final selectedDay = DateTime(
+      widget.date.year,
+      widget.date.month,
+      widget.date.day,
+    );
+
+    final today = DateTime(now.year, now.month, now.day);
+
+    if (selectedDay.isBefore(today)) {
+      return true;
+    }
+
+    if (selectedDay != today) {
+      return false;
+    }
+
+    final candidate = selectedDay.add(Duration(minutes: startMinutes));
+
+    return candidate.isBefore(now);
   }
 
   void _selectTime(int minutes) {
@@ -150,21 +218,28 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
     });
   }
 
-  void _continue() {
+  void _continue(List<int> availableTimes) {
     final selected = _selectedStartMinutes;
 
     if (selected == null) {
       return;
     }
 
-    final end = selected + widget.service.durationMinutes;
+    if (!availableTimes.contains(selected)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Este horário não está mais disponível.')),
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Horário selecionado: '
-          '${_formatTime(selected)} às '
-          '${_formatTime(end)}.',
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AppointmentSummaryPage(
+          service: widget.service,
+          professional: widget.professional,
+          date: widget.date,
+          startMinutes: selected,
         ),
       ),
     );
@@ -176,170 +251,212 @@ class _TimeSelectionPageState extends State<TimeSelectionPage> {
       appBar: AppBar(title: const Text('Escolha o horário')),
       body: FutureBuilder<ProfessionalAvailability?>(
         future: _availabilityFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+        builder: (context, availabilitySnapshot) {
+          if (availabilitySnapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (snapshot.hasError) {
+          if (availabilitySnapshot.hasError) {
             debugPrint(
               'AVAILABILITY ERROR -> '
-              '${snapshot.error}',
+              '${availabilitySnapshot.error}',
             );
 
             return const _AvailabilityError();
           }
 
-          final availability = snapshot.data;
+          final availability = availabilitySnapshot.data;
 
           if (availability == null || !availability.enabled) {
             return _NoAvailability(date: _formatDate(widget.date));
           }
 
-          final times = _generateAvailableTimes(availability);
+          return StreamBuilder<Set<int>>(
+            stream: _appointmentRepository.watchBookedSlotMinutes(
+              professionalId: widget.professional.id,
+              date: widget.date,
+            ),
+            builder: (context, bookedSnapshot) {
+              if (bookedSnapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          if (times.isEmpty) {
-            return _NoAvailability(date: _formatDate(widget.date));
-          }
+              if (bookedSnapshot.hasError) {
+                debugPrint(
+                  'BOOKED SLOTS ERROR -> '
+                  '${bookedSnapshot.error}',
+                );
 
-          return SafeArea(
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(20),
-                    children: [
-                      _BookingSummaryCard(
-                        service: widget.service,
-                        professional: widget.professional,
-                        date: _formatDate(widget.date),
-                        formattedPrice: _formatPrice(widget.service.priceCents),
-                      ),
+                return const _AvailabilityError();
+              }
 
-                      const SizedBox(height: 28),
+              final occupiedSlots = bookedSnapshot.data ?? <int>{};
 
-                      const Text(
-                        'Horários disponíveis',
-                        style: TextStyle(
-                          fontSize: 23,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+              final times = _generateAvailableTimes(
+                availability,
+                occupiedSlots,
+              );
 
-                      const SizedBox(height: 6),
+              if (times.isEmpty) {
+                return _NoFreeTimes(date: _formatDate(widget.date));
+              }
 
-                      Text(
-                        'Atendimento de '
-                        '${_formatTime(availability.startMinutes)} '
-                        'até '
-                        '${_formatTime(availability.endMinutes)}.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
+              final selected = _selectedStartMinutes;
 
-                      const SizedBox(height: 22),
+              final selectedIsAvailable =
+                  selected != null && times.contains(selected);
 
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                              childAspectRatio: 2.2,
+              return SafeArea(
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.all(20),
+                        children: [
+                          _BookingSummaryCard(
+                            service: widget.service,
+                            professional: widget.professional,
+                            date: _formatDate(widget.date),
+                            formattedPrice: _formatPrice(
+                              widget.service.priceCents,
                             ),
-                        itemCount: times.length,
-                        itemBuilder: (context, index) {
-                          final time = times[index];
-
-                          final selected = _selectedStartMinutes == time;
-
-                          return _TimeCard(
-                            time: _formatTime(time),
-                            selected: selected,
-                            onTap: () {
-                              _selectTime(time);
-                            },
-                          );
-                        },
-                      ),
-
-                      if (_selectedStartMinutes != null) ...[
-                        const SizedBox(height: 28),
-
-                        const Text(
-                          'Horário selecionado',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
                           ),
-                        ),
 
-                        const SizedBox(height: 10),
+                          const SizedBox(height: 28),
 
-                        Container(
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(16),
+                          const Text(
+                            'Horários disponíveis',
+                            style: TextStyle(
+                              fontSize: 23,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.schedule_outlined),
 
-                              const SizedBox(width: 12),
+                          const SizedBox(height: 6),
 
-                              Expanded(
-                                child: Text(
-                                  '${_formatTime(_selectedStartMinutes!)} '
-                                  'às '
-                                  '${_formatTime(_selectedStartMinutes! + widget.service.durationMinutes)}',
-                                  style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                          Text(
+                            'Atendimento de '
+                            '${_formatTime(availability.startMinutes)} '
+                            'até '
+                            '${_formatTime(availability.endMinutes)}.',
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+
+                          const SizedBox(height: 22),
+
+                          GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 12,
+                                  mainAxisSpacing: 12,
+                                  childAspectRatio: 2.2,
                                 ),
-                              ),
+                            itemCount: times.length,
+                            itemBuilder: (context, index) {
+                              final time = times[index];
 
-                              const Icon(Icons.check_circle),
-                            ],
+                              final isSelected =
+                                  selectedIsAvailable && selected == time;
+
+                              return _TimeCard(
+                                time: _formatTime(time),
+                                selected: isSelected,
+                                onTap: () {
+                                  _selectTime(time);
+                                },
+                              );
+                            },
                           ),
-                        ),
-                      ],
 
-                      const SizedBox(height: 30),
-                    ],
-                  ),
-                ),
+                          if (selectedIsAvailable) ...[
+                            const SizedBox(height: 28),
 
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: FilledButton(
-                        onPressed: _selectedStartMinutes == null
-                            ? null
-                            : _continue,
-                        child: const Text('CONTINUAR'),
+                            const Text(
+                              'Horário selecionado',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+
+                            const SizedBox(height: 10),
+
+                            Container(
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.schedule_outlined),
+
+                                  const SizedBox(width: 12),
+
+                                  Expanded(
+                                    child: Text(
+                                      '${_formatTime(selected)} '
+                                      'às '
+                                      '${_formatTime(selected + widget.service.durationMinutes)}',
+                                      style: const TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+
+                                  const Icon(Icons.check_circle),
+                                ],
+                              ),
+                            ),
+                          ],
+
+                          const SizedBox(height: 30),
+                        ],
                       ),
                     ),
-                  ),
+
+                    SafeArea(
+                      top: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: FilledButton(
+                            onPressed: selectedIsAvailable
+                                ? () {
+                                    _continue(times);
+                                  }
+                                : null,
+                            child: const Text('CONTINUAR'),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           );
         },
       ),
     );
   }
 }
+
+// ============================================================
+// RESUMO
+// ============================================================
 
 class _BookingSummaryCard extends StatelessWidget {
   final BarbershopService service;
@@ -433,7 +550,6 @@ class _SummaryRow extends StatelessWidget {
 
               if (subtitle != null && subtitle!.isNotEmpty) ...[
                 const SizedBox(height: 3),
-
                 Text(subtitle!),
               ],
             ],
@@ -496,21 +612,49 @@ class _NoAvailability extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.event_busy_outlined, size: 76),
-
             const SizedBox(height: 20),
-
             const Text(
               'Sem atendimento nesta data',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
             ),
-
             const SizedBox(height: 10),
-
             Text(date, textAlign: TextAlign.center),
-
             const SizedBox(height: 10),
+            const Text(
+              'Volte e escolha outra data.',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
+class _NoFreeTimes extends StatelessWidget {
+  final String date;
+
+  const _NoFreeTimes({required this.date});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.schedule_outlined, size: 76),
+            const SizedBox(height: 20),
+            const Text(
+              'Todos os horários estão ocupados',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Text(date, textAlign: TextAlign.center),
+            const SizedBox(height: 10),
             const Text(
               'Volte e escolha outra data.',
               textAlign: TextAlign.center,
@@ -534,9 +678,7 @@ class _AvailabilityError extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.error_outline, size: 72),
-
             SizedBox(height: 20),
-
             Text(
               'Não foi possível carregar os horários.',
               textAlign: TextAlign.center,
