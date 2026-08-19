@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
+import 'package:j2i_app_barbearia/features/security/presentation/pages/mfa_recovery_page.dart';
 
 class MfaSignInPage extends StatefulWidget {
   final MultiFactorResolver resolver;
@@ -14,14 +15,21 @@ class MfaSignInPage extends StatefulWidget {
 }
 
 class _MfaSignInPageState extends State<MfaSignInPage> {
-  final _authRepository = AuthRepository();
-  final _codeController = TextEditingController();
+  final AuthRepository _authRepository = AuthRepository();
+
+  final TextEditingController _codeController = TextEditingController();
 
   String? _verificationId;
 
-  bool _isSending = false;
+  bool _isSendingCode = false;
+  bool _isConfirmingCode = false;
   bool _codeSent = false;
-  bool _isConfirming = false;
+
+  String? _errorMessage;
+
+  // ============================================================
+  // FATOR MFA DE TELEFONE
+  // ============================================================
 
   PhoneMultiFactorInfo? get _phoneHint {
     for (final hint in widget.resolver.hints) {
@@ -33,240 +41,512 @@ class _MfaSignInPageState extends State<MfaSignInPage> {
     return null;
   }
 
-  @override
-  void dispose() {
-    _codeController.dispose();
-    super.dispose();
+  // ============================================================
+  // MASCARAR TELEFONE
+  // ============================================================
+
+  String _maskedPhone(String phoneNumber) {
+    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+
+    if (digits.length < 4) {
+      return phoneNumber;
+    }
+
+    final lastFour = digits.substring(digits.length - 4);
+
+    return '+*********$lastFour';
   }
 
-  Future<void> _sendCode() async {
+  // ============================================================
+  // ERROS
+  // ============================================================
+
+  String _firebaseErrorMessage(FirebaseAuthException exception) {
+    switch (exception.code) {
+      case 'invalid-verification-code':
+        return 'O código informado está incorreto.';
+
+      case 'session-expired':
+        return 'O código expirou. '
+            'Solicite um novo código.';
+
+      case 'too-many-requests':
+        return 'Muitas tentativas foram realizadas. '
+            'Aguarde alguns minutos e tente novamente.';
+
+      case 'quota-exceeded':
+        return 'O limite de SMS foi atingido. '
+            'Tente novamente mais tarde.';
+
+      case 'invalid-phone-number':
+        return 'O telefone de segurança é inválido.';
+
+      case 'network-request-failed':
+        return 'Não foi possível conectar ao Firebase. '
+            'Verifique sua internet.';
+
+      case 'operation-not-allowed':
+        return 'A autenticação por telefone '
+            'não está habilitada.';
+
+      default:
+        return exception.message ??
+            'Não foi possível concluir '
+                'a verificação de segurança.';
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // ============================================================
+  // ENVIAR CÓDIGO MFA
+  // ============================================================
+
+  Future<void> _sendCode({bool resend = false}) async {
+    if (_isSendingCode || _isConfirmingCode) {
+      return;
+    }
+
     final hint = _phoneHint;
 
     if (hint == null) {
-      _showMessage('Nenhum telefone de segurança foi encontrado.');
+      setState(() {
+        _errorMessage =
+            'Nenhum telefone de segurança '
+            'foi encontrado nesta conta.';
+      });
+
       return;
     }
 
     setState(() {
-      _isSending = true;
+      _isSendingCode = true;
+      _errorMessage = null;
     });
 
     try {
       await _authRepository.startMfaSignIn(
         resolver: widget.resolver,
+
         hint: hint,
-        verificationCompleted: (_) {},
-        verificationFailed: (FirebaseAuthException e) {
-          if (!mounted) return;
+
+        verificationCompleted: (PhoneAuthCredential credential) {
+          // Confirmação manual.
+        },
+
+        verificationFailed: (FirebaseAuthException exception) {
+          if (!mounted) {
+            return;
+          }
 
           setState(() {
-            _isSending = false;
-          });
+            _isSendingCode = false;
 
-          _handleFirebaseError(e);
+            _errorMessage = _firebaseErrorMessage(exception);
+          });
         },
-        codeSent: (String verificationId, int? resendToken) {
-          if (!mounted) return;
+
+        codeSent: (String verificationId, int? _) {
+          if (!mounted) {
+            return;
+          }
+
+          _codeController.clear();
 
           setState(() {
             _verificationId = verificationId;
+
             _codeSent = true;
-            _isSending = false;
+
+            _isSendingCode = false;
+
+            _errorMessage = null;
           });
 
-          _showMessage('Código de segurança enviado.');
+          _showMessage(
+            resend ? 'Novo código enviado.' : 'Código de segurança enviado.',
+          );
         },
-        codeAutoRetrievalTimeout: (String verificationId) {
-          if (!mounted) return;
 
-          setState(() {
-            _verificationId = verificationId;
-            _isSending = false;
-          });
+        codeAutoRetrievalTimeout: (String verificationId) {
+          _verificationId = verificationId;
+
+          if (mounted) {
+            setState(() {
+              _isSendingCode = false;
+            });
+          }
         },
       );
     } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
-        _isSending = false;
-      });
+        _isSendingCode = false;
 
-      _handleFirebaseError(e);
-    } catch (_) {
-      if (!mounted) return;
+        _errorMessage = _firebaseErrorMessage(e);
+      });
+    } catch (e) {
+      debugPrint('MFA SEND CODE ERROR -> $e');
+
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
-        _isSending = false;
-      });
+        _isSendingCode = false;
 
-      _showMessage('Não foi possível enviar o código.');
+        _errorMessage =
+            'Não foi possível enviar '
+            'o código de segurança.';
+      });
     }
   }
 
+  // ============================================================
+  // CONFIRMAR CÓDIGO MFA
+  // ============================================================
+
   Future<void> _confirmCode() async {
-    final verificationId = _verificationId;
-
-    final code = _codeController.text.trim();
-
-    if (verificationId == null) {
-      _showMessage('Solicite o código primeiro.');
+    if (_isConfirmingCode || _isSendingCode) {
       return;
     }
 
-    if (code.length != 6) {
-      _showMessage('Informe o código de 6 dígitos.');
+    final verificationId = _verificationId;
+
+    final smsCode = _codeController.text.trim();
+
+    if (verificationId == null) {
+      setState(() {
+        _errorMessage =
+            'Solicite um código antes '
+            'de continuar.';
+      });
+
+      return;
+    }
+
+    if (smsCode.length != 6) {
+      setState(() {
+        _errorMessage = 'Informe o código de 6 dígitos.';
+      });
+
       return;
     }
 
     setState(() {
-      _isConfirming = true;
+      _isConfirmingCode = true;
+      _errorMessage = null;
     });
 
     try {
       await _authRepository.completeMfaSignIn(
         resolver: widget.resolver,
         verificationId: verificationId,
-        smsCode: code,
+        smsCode: smsCode,
       );
 
-      if (!mounted) return;
-
-      _showMessage('Login confirmado com sucesso!');
-
-      Navigator.of(context).pop();
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-
-      _handleFirebaseError(e);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isConfirming = false;
-        });
+      if (!mounted) {
+        return;
       }
+
+      // MUITO IMPORTANTE:
+      //
+      // A tela que abriu o MFA receberá TRUE.
+      Navigator.of(context).pop(true);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isConfirmingCode = false;
+
+        _errorMessage = _firebaseErrorMessage(e);
+      });
+    } catch (e) {
+      debugPrint('MFA CONFIRM CODE ERROR -> $e');
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isConfirmingCode = false;
+
+        _errorMessage =
+            'Não foi possível confirmar '
+            'o código de segurança.';
+      });
     }
   }
 
-  void _handleFirebaseError(FirebaseAuthException exception) {
-    String message;
+  // ============================================================
+  // RECUPERAÇÃO SEM TELEFONE ANTIGO
+  // ============================================================
 
-    switch (exception.code) {
-      case 'invalid-verification-code':
-        message = 'O código informado é inválido.';
-        break;
-
-      case 'session-expired':
-        message = 'O código expirou. Solicite outro.';
-        break;
-
-      case 'too-many-requests':
-        message = 'Muitas tentativas. Aguarde e tente novamente.';
-        break;
-
-      case 'network-request-failed':
-        message = 'Verifique sua conexão com a internet.';
-        break;
-
-      default:
-        message = 'Erro Firebase: ${exception.code}';
+  Future<void> _openEmailRecovery() async {
+    if (_isSendingCode || _isConfirmingCode) {
+      return;
     }
 
-    _showMessage(message);
+    final currentEmail = FirebaseAuth.instance.currentUser?.email;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => MfaRecoveryPage(initialEmail: currentEmail),
+      ),
+    );
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+
+    super.dispose();
   }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final phone = _phoneHint?.phoneNumber ?? '';
+    final hint = _phoneHint;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Verificação de segurança')),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 32),
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            const SizedBox(height: 24),
 
-              const Icon(Icons.phonelink_lock_outlined, size: 80),
+            const Icon(Icons.phonelink_lock_outlined, size: 78),
 
-              const SizedBox(height: 24),
+            const SizedBox(height: 26),
 
-              const Text(
-                'Confirme que é você',
+            const Text(
+              'Confirme que é você',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+            ),
+
+            const SizedBox(height: 12),
+
+            const Text(
+              'Sua conta possui verificação '
+              'em duas etapas.',
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 16),
+
+            if (hint != null)
+              Text(
+                'Telefone de segurança: '
+                '${_maskedPhone(hint.phoneNumber)}',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontWeight: FontWeight.w600),
               ),
 
-              const SizedBox(height: 12),
-
+            if (hint == null)
               const Text(
-                'Sua conta possui verificação '
-                'em duas etapas.',
+                'Nenhum telefone de segurança '
+                'foi encontrado.',
                 textAlign: TextAlign.center,
               ),
 
-              const SizedBox(height: 16),
+            const SizedBox(height: 30),
 
-              if (phone.isNotEmpty)
-                Text(
-                  'Telefone de segurança: $phone',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+            // ==================================================
+            // ENVIAR CÓDIGO
+            // ==================================================
+            if (!_codeSent && hint != null)
+              SizedBox(
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: _isSendingCode
+                      ? null
+                      : () {
+                          _sendCode();
+                        },
+                  icon: _isSendingCode
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.sms_outlined),
+                  label: Text(_isSendingCode ? 'ENVIANDO...' : 'ENVIAR CÓDIGO'),
                 ),
+              ),
 
-              const SizedBox(height: 32),
+            // ==================================================
+            // CONFIRMAR CÓDIGO
+            // ==================================================
+            if (_codeSent) ...[
+              TextField(
+                controller: _codeController,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                maxLength: 6,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
 
-              if (!_codeSent)
-                FilledButton.icon(
-                  onPressed: _isSending ? null : _sendCode,
-                  icon: const Icon(Icons.sms_outlined),
-                  label: Text(_isSending ? 'ENVIANDO...' : 'ENVIAR CÓDIGO'),
+                  LengthLimitingTextInputFormatter(6),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Código de segurança',
+                  hintText: '123456',
+                  prefixIcon: Icon(Icons.password_outlined),
+                  border: OutlineInputBorder(),
                 ),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  if (!_isConfirmingCode) {
+                    _confirmCode();
+                  }
+                },
+              ),
 
-              if (_codeSent) ...[
-                TextField(
-                  controller: _codeController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(6),
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Código de segurança',
-                    hintText: '123456',
-                    counterText: '',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.lock_outline),
+              const SizedBox(height: 20),
+
+              SizedBox(
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: _isConfirmingCode ? null : _confirmCode,
+                  icon: _isConfirmingCode
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.verified_user_outlined),
+                  label: Text(
+                    _isConfirmingCode
+                        ? 'CONFIRMANDO...'
+                        : 'CONFIRMAR IDENTIDADE',
                   ),
                 ),
+              ),
 
-                const SizedBox(height: 20),
+              const SizedBox(height: 8),
 
-                FilledButton(
-                  onPressed: _isConfirming ? null : _confirmCode,
-                  child: Text(
-                    _isConfirming ? 'CONFIRMANDO...' : 'CONFIRMAR LOGIN',
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                TextButton(
-                  onPressed: _isSending ? null : _sendCode,
-                  child: const Text('Reenviar código'),
-                ),
-              ],
+              TextButton.icon(
+                onPressed: _isSendingCode || _isConfirmingCode
+                    ? null
+                    : () {
+                        _sendCode(resend: true);
+                      },
+                icon: const Icon(Icons.refresh),
+                label: const Text('REENVIAR CÓDIGO'),
+              ),
             ],
-          ),
+
+            // ==================================================
+            // ERRO
+            // ==================================================
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 18),
+
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+
+                    const SizedBox(width: 10),
+
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 28),
+
+            const Divider(),
+
+            const SizedBox(height: 14),
+
+            // ==================================================
+            // PERDEU O TELEFONE
+            // ==================================================
+            const Text(
+              'Não tem mais acesso a este telefone?',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+
+            const SizedBox(height: 10),
+
+            OutlinedButton.icon(
+              onPressed: _isSendingCode || _isConfirmingCode
+                  ? null
+                  : _openEmailRecovery,
+              icon: const Icon(Icons.mark_email_read_outlined),
+              label: const Text('RECUPERAR PELO E-MAIL'),
+            ),
+
+            const SizedBox(height: 24),
+
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.security_outlined),
+
+                  SizedBox(width: 12),
+
+                  Expanded(
+                    child: Text(
+                      'A recuperação pelo e-mail '
+                      'é destinada a situações em '
+                      'que o telefone antigo foi '
+                      'perdido, roubado ou não está '
+                      'mais disponível.',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

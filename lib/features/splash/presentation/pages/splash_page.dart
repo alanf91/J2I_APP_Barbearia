@@ -22,7 +22,7 @@ class _SplashPageState extends State<SplashPage> {
 
     Navigator.of(
       context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const AuthGatePage()));
+    ).pushReplacement(MaterialPageRoute(builder: (_) => AuthGate()));
   }
 
   @override

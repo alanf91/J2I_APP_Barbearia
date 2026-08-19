@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:j2i_app_barbearia/features/profile/presentation/pages/change_phone_page.dart';
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
 import 'package:j2i_app_barbearia/features/profile/presentation/pages/change_email_page.dart';
 
@@ -338,7 +339,18 @@ class _ClientProfilePageState extends State<ClientProfilePage> {
                       leading: const Icon(Icons.phone_outlined),
                       title: const Text('Telefone'),
                       subtitle: Text(phone),
-                      trailing: const Icon(Icons.verified_outlined),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        final changed = await Navigator.of(context).push<bool>(
+                          MaterialPageRoute(
+                            builder: (_) => const ChangePhonePage(),
+                          ),
+                        );
+
+                        if (changed == true && mounted) {
+                          _refreshProfile();
+                        }
+                      },
                     ),
 
                     const Divider(height: 1),
