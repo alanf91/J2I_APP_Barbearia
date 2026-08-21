@@ -171,11 +171,9 @@ class AuthGate extends StatelessWidget {
                 // ==============================================
 
                 return DeviceRegistrationGate(
-  key: ValueKey(
-    user.uid,
-  ),
-  child: ClientHomePage(),
-);
+                  key: ValueKey(user.uid),
+                  child: ClientHomePage(),
+                );
               },
             );
           },

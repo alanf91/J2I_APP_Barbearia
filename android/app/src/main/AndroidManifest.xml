@@ -1,8 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:label="j2i_app_barbearia"
-        android:name="${applicationName}"
+        android:name=".J2IApplication"
         android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".CardTokenizationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

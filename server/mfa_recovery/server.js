@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -17,6 +19,30 @@ const {
   FieldValue,
   Timestamp,
 } = require('firebase-admin/firestore');
+
+
+// ============================================================
+// MERCADO PAGO
+// ============================================================
+
+const MERCADO_PAGO_ACCESS_TOKEN =
+  process.env.MERCADO_PAGO_ACCESS_TOKEN;
+
+const MERCADO_PAGO_TEST_MODE =
+  String(
+    process.env.MERCADO_PAGO_TEST_MODE || 'false',
+  ).toLowerCase() === 'true';
+
+const MERCADO_PAGO_ORDERS_URL =
+  'https://api.mercadopago.com/v1/orders';
+
+if (!MERCADO_PAGO_ACCESS_TOKEN) {
+  console.error(
+    'ERRO: MERCADO_PAGO_ACCESS_TOKEN não configurado.',
+  );
+
+  process.exit(1);
+}
 
 // ============================================================
 // FIREBASE ADMIN
@@ -905,6 +931,532 @@ app.post(
           message:
             'Não foi possível finalizar '
             + 'o novo telefone.',
+        });
+    }
+  },
+);
+
+// ============================================================
+// PAGAMENTOS - CRIAR PIX
+// ============================================================
+//
+// Flutter envia SOMENTE:
+//
+// appointmentId
+//
+// O Flutter NÃO escolhe:
+// - preço
+// - usuário
+// - status
+// - Access Token
+//
+// O backend confirma tudo antes de falar com Mercado Pago.
+// ============================================================
+
+app.post(
+  '/v1/payments/pix',
+  async (request, response) => {
+    // ==========================================================
+    // 1. VALIDAR FIREBASE ID TOKEN
+    // ==========================================================
+
+    const authorization =
+      String(
+        request.headers.authorization || '',
+      ).trim();
+
+    if (
+      !authorization.startsWith(
+        'Bearer ',
+      )
+    ) {
+      return response
+        .status(401)
+        .json({
+          ok: false,
+          code: 'UNAUTHORIZED',
+          message:
+            'Usuário não autenticado.',
+        });
+    }
+
+    const idToken =
+      authorization
+        .substring(7)
+        .trim();
+
+    if (!idToken) {
+      return response
+        .status(401)
+        .json({
+          ok: false,
+          code: 'UNAUTHORIZED',
+          message:
+            'Token de autenticação inválido.',
+        });
+    }
+
+    // ==========================================================
+    // 2. APPOINTMENT ID
+    // ==========================================================
+
+    const appointmentId =
+      String(
+        request.body?.appointmentId || '',
+      ).trim();
+
+    if (!appointmentId) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'APPOINTMENT_REQUIRED',
+          message:
+            'Agendamento não informado.',
+        });
+    }
+
+    try {
+      // ========================================================
+      // 3. VALIDAR O USUÁRIO
+      // ========================================================
+
+      const decodedToken =
+        await auth.verifyIdToken(
+          idToken,
+          true,
+        );
+
+      const uid =
+        decodedToken.uid;
+
+      // ========================================================
+      // 4. BUSCAR AGENDAMENTO NO FIRESTORE
+      // ========================================================
+
+      const appointmentReference =
+        db
+          .collection('appointments')
+          .doc(appointmentId);
+
+      const appointmentSnapshot =
+        await appointmentReference.get();
+
+      if (!appointmentSnapshot.exists) {
+        return response
+          .status(404)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_NOT_FOUND',
+            message:
+              'Agendamento não encontrado.',
+          });
+      }
+
+      const appointment =
+        appointmentSnapshot.data();
+
+      if (!appointment) {
+        return response
+          .status(404)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_NOT_FOUND',
+            message:
+              'Dados do agendamento não encontrados.',
+          });
+      }
+
+      // ========================================================
+      // 5. O AGENDAMENTO PERTENCE AO USUÁRIO?
+      // ========================================================
+
+      if (
+        appointment.userId !==
+        uid
+      ) {
+        return response
+          .status(403)
+          .json({
+            ok: false,
+            code:
+              'FORBIDDEN',
+            message:
+              'Você não possui acesso a este agendamento.',
+          });
+      }
+
+      // ========================================================
+      // 6. AGENDAMENTO CANCELADO NÃO PODE SER PAGO
+      // ========================================================
+
+      if (
+        appointment.status ===
+        'cancelled'
+      ) {
+        return response
+          .status(409)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_CANCELLED',
+            message:
+              'Este agendamento foi cancelado.',
+          });
+      }
+
+      // ========================================================
+      // 7. PREÇO REAL DO AGENDAMENTO
+      // ========================================================
+
+      const priceCents =
+        Number(
+          appointment.priceCents,
+        );
+
+      if (
+        !Number.isInteger(
+          priceCents,
+        ) ||
+        priceCents <= 0
+      ) {
+        return response
+          .status(409)
+          .json({
+            ok: false,
+            code:
+              'INVALID_APPOINTMENT_PRICE',
+            message:
+              'O agendamento não possui um valor válido.',
+          });
+      }
+
+      const realAmount =
+        (
+          priceCents / 100
+        ).toFixed(2);
+
+      // ========================================================
+      // 8. VALOR DO SANDBOX
+      // ========================================================
+      //
+      // No teste oficial do Pix Orders API utilizaremos
+      // R$ 50,00 e comprador APRO.
+      //
+      // Em produção:
+      // amount = valor real do agendamento.
+      // ========================================================
+
+      const mercadoPagoAmount =
+        MERCADO_PAGO_TEST_MODE
+          ? '50.00'
+          : realAmount;
+
+      // ========================================================
+      // 9. E-MAIL DO PAGADOR
+      // ========================================================
+
+      const payerEmail =
+        MERCADO_PAGO_TEST_MODE
+          ? 'test_user_br@testuser.com'
+          : String(
+              decodedToken.email || '',
+            )
+              .trim()
+              .toLowerCase();
+
+      if (
+        !MERCADO_PAGO_TEST_MODE &&
+        !payerEmail
+      ) {
+        return response
+          .status(409)
+          .json({
+            ok: false,
+            code:
+              'EMAIL_REQUIRED',
+            message:
+              'A conta não possui e-mail válido.',
+          });
+      }
+
+      // ========================================================
+      // 10. IDEMPOTÊNCIA
+      // ========================================================
+      //
+      // Para o mesmo usuário + agendamento + Pix,
+      // repetiremos a mesma chave.
+      //
+      // Assim dois toques acidentais não devem gerar
+      // duas cobranças independentes.
+      // ========================================================
+
+      const idempotencyKey =
+        crypto
+          .createHash('sha256')
+          .update(
+            `pix:${uid}:${appointmentId}:v1`,
+          )
+          .digest('hex');
+
+      // ========================================================
+      // 11. REFERÊNCIA EXTERNA
+      // ========================================================
+
+      const externalReference =
+        `j2i_appointment_${appointmentId}`;
+
+      // ========================================================
+      // 12. BODY MERCADO PAGO
+      // ========================================================
+
+      const mercadoPagoBody = {
+        type:
+          'online',
+
+        external_reference:
+          externalReference,
+
+        processing_mode:
+          'automatic',
+
+        total_amount:
+          mercadoPagoAmount,
+
+        payer: {
+          email:
+            payerEmail,
+        },
+
+        transactions: {
+          payments: [
+            {
+              amount:
+                mercadoPagoAmount,
+
+              payment_method: {
+                id:
+                  'pix',
+
+                type:
+                  'bank_transfer',
+              },
+
+              // Pix válido por 30 minutos.
+              expiration_time:
+                'PT30M',
+            },
+          ],
+        },
+      };
+
+      // Cenário oficial de teste.
+      if (
+        MERCADO_PAGO_TEST_MODE
+      ) {
+        mercadoPagoBody
+          .payer
+          .first_name =
+          'APRO';
+      }
+
+      // ========================================================
+      // 13. CHAMAR MERCADO PAGO
+      // ========================================================
+
+      const mercadoPagoResponse =
+        await fetch(
+          MERCADO_PAGO_ORDERS_URL,
+          {
+            method:
+              'POST',
+
+            headers: {
+              Accept:
+                'application/json',
+
+              'Content-Type':
+                'application/json',
+
+              Authorization:
+                `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+
+              'X-Idempotency-Key':
+                idempotencyKey,
+            },
+
+            body:
+              JSON.stringify(
+                mercadoPagoBody,
+              ),
+          },
+        );
+
+      const rawResponse =
+        await mercadoPagoResponse.text();
+
+      let mercadoPagoData;
+
+      try {
+        mercadoPagoData =
+          JSON.parse(
+            rawResponse,
+          );
+      } catch (_) {
+        mercadoPagoData = {};
+      }
+
+      // ========================================================
+      // 14. ERRO DO MERCADO PAGO
+      // ========================================================
+
+      if (
+        !mercadoPagoResponse.ok
+      ) {
+        console.error(
+          'MERCADO PAGO PIX ERROR:',
+          {
+            status:
+              mercadoPagoResponse.status,
+
+            appointmentId:
+              appointmentId,
+
+            response:
+              mercadoPagoData,
+          },
+        );
+
+        return response
+          .status(502)
+          .json({
+            ok: false,
+
+            code:
+              'MERCADO_PAGO_ERROR',
+
+            message:
+              'Não foi possível gerar o Pix.',
+
+            mercadoPagoStatus:
+              mercadoPagoResponse.status,
+          });
+      }
+
+      // ========================================================
+      // 15. PEGAR O PAGAMENTO
+      // ========================================================
+
+      const payment =
+        mercadoPagoData
+          .transactions
+          ?.payments?.[0];
+
+      const paymentMethod =
+        payment
+          ?.payment_method;
+
+      if (
+        !mercadoPagoData.id ||
+        !payment?.id ||
+        !paymentMethod?.qr_code
+      ) {
+        console.error(
+          'INVALID MERCADO PAGO PIX RESPONSE:',
+          mercadoPagoData,
+        );
+
+        return response
+          .status(502)
+          .json({
+            ok: false,
+
+            code:
+              'INVALID_PIX_RESPONSE',
+
+            message:
+              'O Mercado Pago não retornou os dados completos do Pix.',
+          });
+      }
+
+      // ========================================================
+      // 16. RETORNAR SOMENTE O NECESSÁRIO PARA O FLUTTER
+      // ========================================================
+
+      return response.json({
+        ok: true,
+
+        appointmentId:
+          appointmentId,
+
+        orderId:
+          mercadoPagoData.id,
+
+        paymentId:
+          payment.id,
+
+        status:
+          payment.status,
+
+        statusDetail:
+          payment.status_detail,
+
+        amount:
+          mercadoPagoAmount,
+
+        realAppointmentAmount:
+          realAmount,
+
+        testMode:
+          MERCADO_PAGO_TEST_MODE,
+
+        pix: {
+          qrCode:
+            paymentMethod.qr_code,
+
+          qrCodeBase64:
+            paymentMethod
+              .qr_code_base64 ||
+            '',
+
+          ticketUrl:
+            paymentMethod
+              .ticket_url ||
+            '',
+        },
+      });
+    } catch (error) {
+      console.error(
+        'CREATE PIX ERROR:',
+        error,
+      );
+
+      if (
+        error?.code ===
+        'auth/id-token-revoked'
+      ) {
+        return response
+          .status(401)
+          .json({
+            ok: false,
+            code:
+              'TOKEN_REVOKED',
+            message:
+              'Sua sessão expirou. Entre novamente.',
+          });
+      }
+
+      return response
+        .status(500)
+        .json({
+          ok: false,
+          code:
+            'CREATE_PIX_ERROR',
+          message:
+            'Não foi possível gerar o pagamento Pix.',
         });
     }
   },
