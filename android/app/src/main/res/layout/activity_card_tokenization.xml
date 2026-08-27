@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
@@ -28,12 +29,34 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Ambiente de teste Mercado Pago"
+            android:text="Ambiente seguro Mercado Pago"
             android:textColor="#666666"
             android:textSize="15sp" />
 
         <!-- ================================================= -->
-        <!-- AVISO SANDBOX -->
+        <!-- VALOR -->
+        <!-- ================================================= -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Valor"
+            android:textColor="#666666"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/amountTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="R$ 0,00"
+            android:textColor="#111111"
+            android:textSize="30sp"
+            android:textStyle="bold" />
+
+        <!-- ================================================= -->
+        <!-- SANDBOX -->
         <!-- ================================================= -->
 
         <TextView
@@ -42,13 +65,13 @@
             android:layout_marginTop="20dp"
             android:background="#EAF4FF"
             android:padding="14dp"
-            android:text="TESTE / SANDBOX — nenhum dinheiro real será movimentado."
+            android:text="AMBIENTE DE TESTE — nenhum dinheiro real será movimentado."
             android:textColor="#123A63"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <!-- ================================================= -->
-        <!-- NOME DO TITULAR -->
+        <!-- TITULAR -->
         <!-- ================================================= -->
 
         <TextView
@@ -96,7 +119,7 @@
             android:paddingHorizontal="12dp" />
 
         <!-- ================================================= -->
-        <!-- NÚMERO DO CARTÃO - PCI MERCADO PAGO -->
+        <!-- NÚMERO -->
         <!-- ================================================= -->
 
         <TextView
@@ -114,6 +137,28 @@
             android:layout_height="56dp"
             android:layout_marginTop="6dp"
             android:background="@android:drawable/editbox_background" />
+
+        <!-- ================================================= -->
+        <!-- MODALIDADE / BANDEIRA -->
+        <!-- ================================================= -->
+
+        <TextView
+            android:id="@+id/paymentMethodLabelTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Modalidade"
+            android:textColor="#222222"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <Spinner
+            android:id="@+id/paymentMethodSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
 
         <!-- ================================================= -->
         <!-- VALIDADE -->
@@ -156,6 +201,28 @@
             android:background="@android:drawable/editbox_background" />
 
         <!-- ================================================= -->
+        <!-- PARCELAS -->
+        <!-- ================================================= -->
+
+        <TextView
+            android:id="@+id/installmentLabelTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Parcelas"
+            android:textColor="#222222"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <Spinner
+            android:id="@+id/installmentSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
+
+        <!-- ================================================= -->
         <!-- ERRO -->
         <!-- ================================================= -->
 
@@ -181,7 +248,7 @@
             android:visibility="gone" />
 
         <!-- ================================================= -->
-        <!-- TOKENIZAR -->
+        <!-- PAGAR -->
         <!-- ================================================= -->
 
         <Button
@@ -189,7 +256,8 @@
             android:layout_width="match_parent"
             android:layout_height="56dp"
             android:layout_marginTop="24dp"
-            android:text="GERAR TOKEN SEGURO"
+            android:enabled="false"
+            android:text="PAGAR"
             android:textStyle="bold" />
 
         <!-- ================================================= -->
@@ -208,13 +276,13 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:gravity="center"
-            android:text="Os dados do cartão são processados pelo SDK do Mercado Pago."
+            android:text="Os dados sensíveis do cartão são processados pelo Mercado Pago."
             android:textColor="#777777"
             android:textSize="12sp" />
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="24dp" />
+            android:layout_height="30dp" />
 
     </LinearLayout>
 

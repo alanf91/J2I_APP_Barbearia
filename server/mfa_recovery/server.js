@@ -6,6 +6,15 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('node:crypto');
 
 const {
+  registerPayment,
+  findPaymentsForAppointment,
+} = require('./payment_store');
+
+const {
+  registerMercadoPagoWebhook,
+} = require('./mercado_pago_webhook');
+
+const {
   initializeApp,
   applicationDefault,
 } = require('firebase-admin/app');
@@ -20,13 +29,17 @@ const {
   Timestamp,
 } = require('firebase-admin/firestore');
 
-
 // ============================================================
 // MERCADO PAGO
 // ============================================================
 
 const MERCADO_PAGO_ACCESS_TOKEN =
   process.env.MERCADO_PAGO_ACCESS_TOKEN;
+
+const MERCADO_PAGO_WEBHOOK_SECRET =
+  String(
+    process.env.MERCADO_PAGO_WEBHOOK_SECRET || '',
+  ).trim();
 
 const MERCADO_PAGO_TEST_MODE =
   String(
@@ -48,8 +61,24 @@ if (!MERCADO_PAGO_ACCESS_TOKEN) {
 // FIREBASE ADMIN
 // ============================================================
 
+const FIREBASE_PROJECT_ID =
+  String(
+    process.env.FIREBASE_PROJECT_ID || '',
+  ).trim();
+
+if (!FIREBASE_PROJECT_ID) {
+  console.error(
+    'ERRO: FIREBASE_PROJECT_ID não configurado.',
+  );
+
+  process.exit(1);
+}
+
 initializeApp({
   credential: applicationDefault(),
+
+  projectId:
+    FIREBASE_PROJECT_ID,
 });
 
 const auth = getAuth();
@@ -72,9 +101,6 @@ const RECOVERY_EXPIRATION_MS =
   60 *
   1000;
 
-// Quando futuramente usarmos ngrok/proxy,
-// isso permite ao Express interpretar corretamente
-// o endereço do cliente.
 app.set(
   'trust proxy',
   1,
@@ -181,6 +207,584 @@ function parseFirebaseTime(value) {
   return milliseconds;
 }
 
+function normalizeBrazilPhone(value) {
+  let digits =
+    String(value || '')
+      .replace(/\D/g, '');
+
+  if (
+    digits.startsWith('55') &&
+    (
+      digits.length === 12 ||
+      digits.length === 13
+    )
+  ) {
+    digits =
+      digits.substring(2);
+  }
+
+  if (
+    digits.length !== 10 &&
+    digits.length !== 11
+  ) {
+    return null;
+  }
+
+  return digits;
+}
+
+function getBearerToken(request) {
+  const authorization =
+    String(
+      request.headers.authorization || '',
+    ).trim();
+
+  if (
+    !authorization.startsWith(
+      'Bearer ',
+    )
+  ) {
+    return null;
+  }
+
+  const idToken =
+    authorization
+      .substring(7)
+      .trim();
+
+  return idToken || null;
+}
+
+function getAppointmentAmount(
+  appointment,
+) {
+  const priceCents =
+    Number(
+      appointment?.priceCents,
+    );
+
+  if (
+    !Number.isInteger(priceCents) ||
+    priceCents <= 0
+  ) {
+    return null;
+  }
+
+  const realAmount =
+    (
+      priceCents / 100
+    ).toFixed(2);
+
+  // O Mercado Pago deve cobrar exatamente o valor do serviço
+  // salvo no agendamento, inclusive no ambiente de teste.
+  const mercadoPagoAmount =
+    realAmount;
+
+  return {
+    priceCents,
+    realAmount,
+    mercadoPagoAmount,
+  };
+}
+
+function getAppointmentExpirationMs(
+  appointment,
+) {
+  const expirationMs =
+    appointment
+      ?.paymentExpiresAt
+      ?.toMillis?.();
+
+  if (
+    !Number.isFinite(
+      expirationMs,
+    )
+  ) {
+    return null;
+  }
+
+  return expirationMs;
+}
+
+async function validateAppointmentForPayment({
+  appointmentReference,
+  appointment,
+}) {
+  const status =
+    String(
+      appointment?.status || '',
+    ).trim();
+
+  if (status === 'cancelled') {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'APPOINTMENT_CANCELLED',
+      message: 'Este agendamento foi cancelado.',
+    };
+  }
+
+  if (status === 'expired') {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'APPOINTMENT_EXPIRED',
+      message:
+        'A reserva deste horário expirou. Escolha o horário novamente.',
+    };
+  }
+
+  if (status === 'confirmed') {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'APPOINTMENT_ALREADY_CONFIRMED',
+      message: 'Este agendamento já está confirmado.',
+    };
+  }
+
+  if (status !== 'pending_payment') {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'APPOINTMENT_NOT_PAYABLE',
+      message:
+        'Este agendamento não está disponível para pagamento.',
+    };
+  }
+
+  const expirationMs =
+    getAppointmentExpirationMs(
+      appointment,
+    );
+
+  if (expirationMs == null) {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'INVALID_PAYMENT_RESERVATION',
+      message:
+        'A reserva do horário não possui uma validade correta.',
+    };
+  }
+
+  const nowMs = Date.now();
+
+  if (expirationMs <= nowMs) {
+    try {
+      await db.runTransaction(
+        async (transaction) => {
+          const freshSnapshot =
+            await transaction.get(
+              appointmentReference,
+            );
+
+          if (!freshSnapshot.exists) {
+            return;
+          }
+
+          const freshAppointment =
+            freshSnapshot.data();
+
+          const freshStatus =
+            String(
+              freshAppointment?.status || '',
+            ).trim();
+
+          const freshExpirationMs =
+            getAppointmentExpirationMs(
+              freshAppointment,
+            );
+
+          if (
+            freshStatus === 'pending_payment' &&
+            freshExpirationMs != null &&
+            freshExpirationMs <= Date.now()
+          ) {
+            transaction.update(
+              appointmentReference,
+              {
+                status: 'expired',
+                expiredAt:
+                  FieldValue.serverTimestamp(),
+              },
+            );
+          }
+        },
+      );
+    } catch (error) {
+      console.error(
+        'MARK APPOINTMENT EXPIRED ERROR:',
+        {
+          appointmentId:
+            appointmentReference.id,
+          message:
+            error?.message ||
+            'Unknown error',
+        },
+      );
+    }
+
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'APPOINTMENT_EXPIRED',
+      message:
+        'A reserva de 2 minutos expirou. Escolha o horário novamente.',
+    };
+  }
+
+  const startAtMs =
+    appointment
+      ?.startAt
+      ?.toMillis?.();
+
+  if (
+    Number.isFinite(startAtMs) &&
+    startAtMs <= nowMs
+  ) {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'APPOINTMENT_ALREADY_STARTED',
+      message:
+        'O horário deste atendimento já começou.',
+    };
+  }
+
+  return {
+    ok: true,
+  };
+}
+
+// ============================================================
+// BLOQUEIO DE COBRANÇA DUPLICADA
+// ============================================================
+
+const PAYMENT_CREATION_LOCK_MS =
+  90 * 1000;
+
+const RETRYABLE_PAYMENT_STATUSES =
+  new Set([
+    'failed',
+    'canceled',
+    'cancelled',
+    'expired',
+  ]);
+
+function normalizePaymentStatus(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function paymentRecordBlocksNewCharge(
+  paymentData,
+) {
+  const status =
+    normalizePaymentStatus(
+      paymentData?.status,
+    );
+
+  // Sem status confiável, bloqueamos por segurança.
+  if (!status) {
+    return true;
+  }
+
+  // Somente estados terminais que não concluíram cobrança
+  // permitem uma nova tentativa.
+  return !RETRYABLE_PAYMENT_STATUSES
+    .has(status);
+}
+
+async function getBlockingPaymentForAppointment(
+  appointmentId,
+) {
+  const payments =
+    await findPaymentsForAppointment({
+      db:
+        db,
+
+      appointmentId:
+        appointmentId,
+
+      limit:
+        20,
+    });
+
+  return payments.find(
+    (payment) =>
+      paymentRecordBlocksNewCharge(
+        payment?.data,
+      ),
+  ) || null;
+}
+
+function getBlockingPaymentResponse(
+  blockingPayment,
+) {
+  const data =
+    blockingPayment?.data || {};
+
+  const status =
+    normalizePaymentStatus(
+      data.status,
+    );
+
+  const statusDetail =
+    normalizePaymentStatus(
+      data.statusDetail,
+    );
+
+  const approved =
+    status === 'processed' &&
+    statusDetail === 'accredited';
+
+  if (approved) {
+    return {
+      ok: false,
+      statusCode: 409,
+      code: 'PAYMENT_ALREADY_APPROVED',
+      message:
+        'Este agendamento já possui um pagamento aprovado.',
+    };
+  }
+
+  return {
+    ok: false,
+    statusCode: 409,
+    code: 'PAYMENT_ALREADY_IN_PROGRESS',
+    message:
+      'Este agendamento já possui um pagamento em andamento.',
+  };
+}
+
+async function acquirePaymentCreationLock({
+  appointmentReference,
+  uid,
+  method,
+}) {
+  const lockId =
+    crypto.randomUUID();
+
+  return db.runTransaction(
+    async (transaction) => {
+      const snapshot =
+        await transaction.get(
+          appointmentReference,
+        );
+
+      if (!snapshot.exists) {
+        return {
+          ok: false,
+          statusCode: 404,
+          code: 'APPOINTMENT_NOT_FOUND',
+          message: 'Agendamento não encontrado.',
+        };
+      }
+
+      const appointment =
+        snapshot.data() || {};
+
+      if (appointment.userId !== uid) {
+        return {
+          ok: false,
+          statusCode: 403,
+          code: 'FORBIDDEN',
+          message:
+            'Você não possui acesso a este agendamento.',
+        };
+      }
+
+      const status =
+        String(
+          appointment.status || '',
+        ).trim();
+
+      if (status !== 'pending_payment') {
+        return {
+          ok: false,
+          statusCode: 409,
+          code: 'APPOINTMENT_NOT_PAYABLE',
+          message:
+            'Este agendamento não está disponível para pagamento.',
+        };
+      }
+
+      const expirationMs =
+        getAppointmentExpirationMs(
+          appointment,
+        );
+
+      const nowMs =
+        Date.now();
+
+      if (
+        expirationMs == null ||
+        expirationMs <= nowMs
+      ) {
+        return {
+          ok: false,
+          statusCode: 409,
+          code: 'APPOINTMENT_EXPIRED',
+          message:
+            'A reserva de 2 minutos expirou. Escolha o horário novamente.',
+        };
+      }
+
+      const currentLock =
+        appointment
+          .paymentCreationLock;
+
+      const currentLockExpiresAtMs =
+        currentLock
+          ?.expiresAt
+          ?.toMillis?.() ||
+        0;
+
+      if (
+        currentLock?.id &&
+        currentLockExpiresAtMs > nowMs
+      ) {
+        return {
+          ok: false,
+          statusCode: 409,
+          code: 'PAYMENT_CREATION_IN_PROGRESS',
+          message:
+            'Já existe uma tentativa de pagamento sendo criada para este agendamento.',
+        };
+      }
+
+      transaction.set(
+        appointmentReference,
+        {
+          paymentCreationLock: {
+            id:
+              lockId,
+
+            method:
+              String(method || '')
+                .trim(),
+
+            createdAt:
+              FieldValue
+                .serverTimestamp(),
+
+            expiresAt:
+              Timestamp.fromMillis(
+                nowMs +
+                PAYMENT_CREATION_LOCK_MS,
+              ),
+          },
+        },
+        {
+          merge: true,
+        },
+      );
+
+      return {
+        ok: true,
+        lockId:
+          lockId,
+      };
+    },
+  );
+}
+
+async function releasePaymentCreationLock({
+  appointmentReference,
+  lockId,
+}) {
+  if (
+    !appointmentReference ||
+    !lockId
+  ) {
+    return;
+  }
+
+  try {
+    await db.runTransaction(
+      async (transaction) => {
+        const snapshot =
+          await transaction.get(
+            appointmentReference,
+          );
+
+        if (!snapshot.exists) {
+          return;
+        }
+
+        const appointment =
+          snapshot.data() || {};
+
+        if (
+          appointment
+            .paymentCreationLock
+            ?.id !== lockId
+        ) {
+          return;
+        }
+
+        transaction.update(
+          appointmentReference,
+          {
+            paymentCreationLock:
+              FieldValue.delete(),
+          },
+        );
+      },
+    );
+  } catch (error) {
+    console.error(
+      'RELEASE PAYMENT LOCK ERROR:',
+      {
+        appointmentId:
+          appointmentReference.id,
+
+        message:
+          error?.message ||
+          'Unknown error',
+      },
+    );
+  }
+}
+
+function getPayerEmail(
+  decodedToken,
+) {
+  if (MERCADO_PAGO_TEST_MODE) {
+    return 'test_user_br@testuser.com';
+  }
+
+  return normalizeEmail(
+    decodedToken?.email,
+  );
+}
+
+function createIdempotencyKey(
+  value,
+) {
+  return crypto
+    .createHash('sha256')
+    .update(value)
+    .digest('hex');
+}
+
+async function readMercadoPagoResponse(
+  mercadoPagoResponse,
+) {
+  const rawResponse =
+    await mercadoPagoResponse.text();
+
+  try {
+    return JSON.parse(
+      rawResponse,
+    );
+  } catch (_) {
+    return {};
+  }
+}
+
 // ============================================================
 // HEALTH CHECK
 // ============================================================
@@ -196,15 +800,28 @@ app.get(
 );
 
 // ============================================================
-// INICIAR RECUPERAÇÃO
+// WEBHOOK MERCADO PAGO
 // ============================================================
-//
-// IMPORTANTE:
-//
-// A resposta externa é propositalmente parecida
-// mesmo quando o e-mail não existe.
-//
-// Isso reduz enumeração de contas.
+
+registerMercadoPagoWebhook({
+  app:
+    app,
+
+  db:
+    db,
+
+  accessToken:
+    MERCADO_PAGO_ACCESS_TOKEN,
+
+  webhookSecret:
+    MERCADO_PAGO_WEBHOOK_SECRET,
+
+  testMode:
+    MERCADO_PAGO_TEST_MODE,
+});
+
+// ============================================================
+// INICIAR RECUPERAÇÃO MFA
 // ============================================================
 
 app.post(
@@ -246,9 +863,6 @@ app.post(
           email,
         );
 
-      // Para recuperação pelo e-mail,
-      // somente contas que já possuem
-      // e-mail verificado são elegíveis.
       if (user.emailVerified) {
         const baselineTokensValidAfterMs =
           parseFirebaseTime(
@@ -287,9 +901,6 @@ app.post(
           });
       }
     } catch (error) {
-      // Não revelamos para o aplicativo
-      // se determinado e-mail existe.
-
       if (
         error?.code !==
         'auth/user-not-found'
@@ -320,22 +931,7 @@ app.post(
 );
 
 // ============================================================
-// CONCLUIR RECUPERAÇÃO
-// ============================================================
-//
-// O aplicativo chama esta rota SOMENTE depois
-// que o usuário redefiniu a senha pelo e-mail.
-//
-// Verificaremos se houve revogação/alteração dos
-// tokens DEPOIS da criação da solicitação.
-//
-// Depois:
-//
-// 1. removemos todos os MFA antigos;
-// 2. removemos o telefone principal antigo;
-// 3. marcamos que a conta precisa cadastrar
-//    um novo telefone;
-// 4. revogamos novamente todas as sessões.
+// CONCLUIR RECUPERAÇÃO MFA
 // ============================================================
 
 app.post(
@@ -349,8 +945,7 @@ app.post(
 
     const recoveryToken =
       String(
-        request.body
-          ?.recoveryToken ||
+        request.body?.recoveryToken ||
           '',
       ).trim();
 
@@ -369,11 +964,12 @@ app.post(
         });
     }
 
-    const reference = db
-      .collection(
-        'mfa_recovery_requests',
-      )
-      .doc(requestId);
+    const reference =
+      db
+        .collection(
+          'mfa_recovery_requests',
+        )
+        .doc(requestId);
 
     const snapshot =
       await reference.get();
@@ -405,10 +1001,6 @@ app.post(
         });
     }
 
-    // ==========================================================
-    // STATUS
-    // ==========================================================
-
     if (
       data.status !==
       'waiting_password_reset'
@@ -424,13 +1016,10 @@ app.post(
         });
     }
 
-    // ==========================================================
-    // EXPIRAÇÃO
-    // ==========================================================
-
     const expiresAtMs =
       data.expiresAt
-        ?.toMillis?.() || 0;
+        ?.toMillis?.() ||
+      0;
 
     if (
       expiresAtMs <=
@@ -456,10 +1045,6 @@ app.post(
         });
     }
 
-    // ==========================================================
-    // TOKEN
-    // ==========================================================
-
     const receivedHash =
       hashToken(
         recoveryToken,
@@ -484,10 +1069,6 @@ app.post(
         });
     }
 
-    // ==========================================================
-    // USUÁRIO
-    // ==========================================================
-
     const uid =
       String(
         data.uid || '',
@@ -509,10 +1090,6 @@ app.post(
       await auth.getUser(
         uid,
       );
-
-    // ==========================================================
-    // DETECTAR REDEFINIÇÃO DA SENHA
-    // ==========================================================
 
     const currentTokensValidAfterMs =
       parseFirebaseTime(
@@ -542,18 +1119,10 @@ app.post(
         });
     }
 
-    // ==========================================================
-    // REGISTRAR QUANTOS FATORES EXISTIAM
-    // ==========================================================
-
     const oldFactors =
       user.multiFactor
         ?.enrolledFactors ||
       [];
-
-    // ==========================================================
-    // REMOVER MFA E TELEFONE ANTIGOS
-    // ==========================================================
 
     await auth.updateUser(
       uid,
@@ -567,13 +1136,6 @@ app.post(
         },
       },
     );
-
-    // O Admin SDK permite atualizar a lista de fatores MFA.
-    // Definir enrolledFactors como null remove os fatores.
-
-    // ==========================================================
-    // MARCAR CONTA PARA NOVO CADASTRO DE TELEFONE
-    // ==========================================================
 
     await db
       .collection('users')
@@ -595,18 +1157,10 @@ app.post(
         },
       );
 
-    // ==========================================================
-    // REVOGAR TODAS AS SESSÕES
-    // ==========================================================
-
     await auth
       .revokeRefreshTokens(
         uid,
       );
-
-    // ==========================================================
-    // FINALIZAR SOLICITAÇÃO
-    // ==========================================================
 
     await reference.update({
       status:
@@ -634,96 +1188,27 @@ app.post(
 );
 
 // ============================================================
-// FINALIZAR CADASTRO DO NOVO TELEFONE APÓS RECUPERAÇÃO
-// ============================================================
-//
-// Fluxo:
-//
-// 1. Flutter faz login novamente.
-// 2. Usuário cadastra um NOVO fator MFA.
-// 3. Flutter envia seu Firebase ID Token.
-// 4. Backend valida o ID Token.
-// 5. Backend confirma que o telefone informado
-//    realmente existe entre os fatores MFA do usuário.
-// 6. Atualiza Firestore.
-// 7. Remove mfaRecoveryRequired.
-// 8. Revoga sessões novamente.
+// FINALIZAR NOVO TELEFONE APÓS RECUPERAÇÃO
 // ============================================================
 
 app.post(
   '/v1/mfa-recovery/finalize-phone',
   async (request, response) => {
-    // ==========================================================
-    // AUTORIZAÇÃO
-    // ==========================================================
-
-    const authorization =
-      String(
-        request.headers.authorization ||
-          '',
-      ).trim();
-
-    if (
-      !authorization.startsWith(
-        'Bearer ',
-      )
-    ) {
-      return response
-        .status(401)
-        .json({
-          ok: false,
-          code: 'UNAUTHORIZED',
-          message:
-            'Autenticação necessária.',
-        });
-    }
-
     const idToken =
-      authorization
-        .substring(7)
-        .trim();
+      getBearerToken(
+        request,
+      );
 
     if (!idToken) {
       return response
         .status(401)
         .json({
           ok: false,
-          code: 'UNAUTHORIZED',
+          code:
+            'UNAUTHORIZED',
           message:
             'Autenticação necessária.',
         });
-    }
-
-    // ==========================================================
-    // NORMALIZAR TELEFONE BRASILEIRO
-    // ==========================================================
-
-    function normalizeBrazilPhone(
-      value,
-    ) {
-      let digits =
-        String(value || '')
-          .replace(/\D/g, '');
-
-      if (
-        digits.startsWith('55') &&
-        (
-          digits.length === 12 ||
-          digits.length === 13
-        )
-      ) {
-        digits =
-          digits.substring(2);
-      }
-
-      if (
-        digits.length !== 10 &&
-        digits.length !== 11
-      ) {
-        return null;
-      }
-
-      return digits;
     }
 
     const requestedPhone =
@@ -744,10 +1229,6 @@ app.post(
     }
 
     try {
-      // ========================================================
-      // VALIDAR TOKEN FIREBASE
-      // ========================================================
-
       const decodedToken =
         await auth.verifyIdToken(
           idToken,
@@ -756,10 +1237,6 @@ app.post(
 
       const uid =
         decodedToken.uid;
-
-      // ========================================================
-      // USUÁRIO NO FIREBASE AUTH
-      // ========================================================
 
       const user =
         await auth.getUser(
@@ -770,10 +1247,6 @@ app.post(
         user.multiFactor
           ?.enrolledFactors ||
         [];
-
-      // ========================================================
-      // CONFIRMAR QUE O TELEFONE ESTÁ REALMENTE NO MFA
-      // ========================================================
 
       const matchingFactor =
         factors.find(
@@ -809,10 +1282,6 @@ app.post(
               + 'confirmado como fator de segurança.',
           });
       }
-
-      // ========================================================
-      // CONFIRMAR QUE ESTA CONTA ESTÁ EM RECUPERAÇÃO
-      // ========================================================
 
       const userReference =
         db
@@ -854,10 +1323,6 @@ app.post(
           });
       }
 
-      // ========================================================
-      // FIRESTORE
-      // ========================================================
-
       await userReference.set(
         {
           phone:
@@ -879,16 +1344,10 @@ app.post(
         },
       );
 
-      // ========================================================
-      // REVOGAR SESSÕES
-      //
-      // O usuário será obrigado a entrar novamente e provar
-      // o NOVO segundo fator.
-      // ========================================================
-
-      await auth.revokeRefreshTokens(
-        uid,
-      );
+      await auth
+        .revokeRefreshTokens(
+          uid,
+        );
 
       return response.json({
         ok: true,
@@ -937,72 +1396,33 @@ app.post(
 );
 
 // ============================================================
-// PAGAMENTOS - CRIAR PIX
-// ============================================================
-//
-// Flutter envia SOMENTE:
-//
-// appointmentId
-//
-// O Flutter NÃO escolhe:
-// - preço
-// - usuário
-// - status
-// - Access Token
-//
-// O backend confirma tudo antes de falar com Mercado Pago.
+// PAGAMENTOS - PREPARAR CARTÃO
 // ============================================================
 
 app.post(
-  '/v1/payments/pix',
+  '/v1/payments/card/prepare',
   async (request, response) => {
-    // ==========================================================
-    // 1. VALIDAR FIREBASE ID TOKEN
-    // ==========================================================
-
-    const authorization =
-      String(
-        request.headers.authorization || '',
-      ).trim();
-
-    if (
-      !authorization.startsWith(
-        'Bearer ',
-      )
-    ) {
-      return response
-        .status(401)
-        .json({
-          ok: false,
-          code: 'UNAUTHORIZED',
-          message:
-            'Usuário não autenticado.',
-        });
-    }
-
     const idToken =
-      authorization
-        .substring(7)
-        .trim();
+      getBearerToken(
+        request,
+      );
 
     if (!idToken) {
       return response
         .status(401)
         .json({
           ok: false,
-          code: 'UNAUTHORIZED',
+          code:
+            'UNAUTHORIZED',
           message:
-            'Token de autenticação inválido.',
+            'Usuário não autenticado.',
         });
     }
 
-    // ==========================================================
-    // 2. APPOINTMENT ID
-    // ==========================================================
-
     const appointmentId =
       String(
-        request.body?.appointmentId || '',
+        request.body?.appointmentId ||
+          '',
       ).trim();
 
     if (!appointmentId) {
@@ -1018,10 +1438,6 @@ app.post(
     }
 
     try {
-      // ========================================================
-      // 3. VALIDAR O USUÁRIO
-      // ========================================================
-
       const decodedToken =
         await auth.verifyIdToken(
           idToken,
@@ -1030,10 +1446,6 @@ app.post(
 
       const uid =
         decodedToken.uid;
-
-      // ========================================================
-      // 4. BUSCAR AGENDAMENTO NO FIRESTORE
-      // ========================================================
 
       const appointmentReference =
         db
@@ -1070,9 +1482,250 @@ app.post(
           });
       }
 
+      if (
+        appointment.userId !==
+        uid
+      ) {
+        return response
+          .status(403)
+          .json({
+            ok: false,
+            code:
+              'FORBIDDEN',
+            message:
+              'Você não possui acesso a este agendamento.',
+          });
+      }
+
+      const paymentEligibility =
+        await validateAppointmentForPayment({
+          appointmentReference:
+            appointmentReference,
+
+          appointment:
+            appointment,
+        });
+
+      if (!paymentEligibility.ok) {
+        return response
+          .status(
+            paymentEligibility.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              paymentEligibility.code,
+            message:
+              paymentEligibility.message,
+          });
+      }
+
       // ========================================================
-      // 5. O AGENDAMENTO PERTENCE AO USUÁRIO?
+      // IMPEDIR COBRANÇA DUPLICADA
       // ========================================================
+
+      const blockingPayment =
+        await getBlockingPaymentForAppointment(
+          appointmentId,
+        );
+
+      if (blockingPayment) {
+        const conflict =
+          getBlockingPaymentResponse(
+            blockingPayment,
+          );
+
+        return response
+          .status(
+            conflict.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              conflict.code,
+            message:
+              conflict.message,
+          });
+      }
+
+      const amounts =
+        getAppointmentAmount(
+          appointment,
+        );
+
+      if (!amounts) {
+        return response
+          .status(409)
+          .json({
+            ok: false,
+            code:
+              'INVALID_APPOINTMENT_PRICE',
+            message:
+              'O agendamento não possui um valor válido.',
+          });
+      }
+
+      return response.json({
+        ok: true,
+
+        appointmentId:
+          appointmentId,
+
+        amount:
+          amounts
+            .mercadoPagoAmount,
+
+        realAppointmentAmount:
+          amounts
+            .realAmount,
+
+        testMode:
+          MERCADO_PAGO_TEST_MODE,
+      });
+    } catch (error) {
+      console.error(
+        'PREPARE CARD PAYMENT ERROR:',
+        {
+          name:
+            error?.name ||
+            'Error',
+
+          code:
+            error?.code ||
+            null,
+
+          message:
+            error?.message ||
+            'Unknown error',
+
+          appointmentId:
+            appointmentId,
+        },
+      );
+
+      if (
+        error?.code ===
+        'auth/id-token-revoked'
+      ) {
+        return response
+          .status(401)
+          .json({
+            ok: false,
+            code:
+              'TOKEN_REVOKED',
+            message:
+              'Sua sessão expirou. Entre novamente.',
+          });
+      }
+
+      return response
+        .status(500)
+        .json({
+          ok: false,
+          code:
+            'PREPARE_CARD_PAYMENT_ERROR',
+          message:
+            'Não foi possível preparar o pagamento com cartão.',
+        });
+    }
+  },
+);
+
+// ============================================================
+// PAGAMENTOS - CRIAR PIX
+// ============================================================
+
+app.post(
+  '/v1/payments/pix',
+  async (request, response) => {
+    const idToken =
+      getBearerToken(
+        request,
+      );
+
+    if (!idToken) {
+      return response
+        .status(401)
+        .json({
+          ok: false,
+          code:
+            'UNAUTHORIZED',
+          message:
+            'Usuário não autenticado.',
+        });
+    }
+
+    const appointmentId =
+      String(
+        request.body?.appointmentId ||
+          '',
+      ).trim();
+
+    if (!appointmentId) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'APPOINTMENT_REQUIRED',
+          message:
+            'Agendamento não informado.',
+        });
+    }
+
+    let paymentCreationLockId =
+      null;
+
+    let appointmentReferenceForLock =
+      null;
+
+    let keepPaymentCreationLock =
+      false;
+
+    try {
+      const decodedToken =
+        await auth.verifyIdToken(
+          idToken,
+          true,
+        );
+
+      const uid =
+        decodedToken.uid;
+
+      const appointmentReference =
+        db
+          .collection('appointments')
+          .doc(appointmentId);
+
+      const appointmentSnapshot =
+        await appointmentReference.get();
+
+      if (!appointmentSnapshot.exists) {
+        return response
+          .status(404)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_NOT_FOUND',
+            message:
+              'Agendamento não encontrado.',
+          });
+      }
+
+      const appointment =
+        appointmentSnapshot.data();
+
+      if (!appointment) {
+        return response
+          .status(404)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_NOT_FOUND',
+            message:
+              'Dados do agendamento não encontrados.',
+          });
+      }
 
       if (
         appointment.userId !==
@@ -1089,40 +1742,99 @@ app.post(
           });
       }
 
-      // ========================================================
-      // 6. AGENDAMENTO CANCELADO NÃO PODE SER PAGO
-      // ========================================================
+      const paymentEligibility =
+        await validateAppointmentForPayment({
+          appointmentReference:
+            appointmentReference,
 
-      if (
-        appointment.status ===
-        'cancelled'
-      ) {
+          appointment:
+            appointment,
+        });
+
+      if (!paymentEligibility.ok) {
         return response
-          .status(409)
+          .status(
+            paymentEligibility.statusCode,
+          )
           .json({
             ok: false,
             code:
-              'APPOINTMENT_CANCELLED',
+              paymentEligibility.code,
             message:
-              'Este agendamento foi cancelado.',
+              paymentEligibility.message,
           });
       }
 
       // ========================================================
-      // 7. PREÇO REAL DO AGENDAMENTO
+      // IMPEDIR COBRANÇA DUPLICADA
       // ========================================================
 
-      const priceCents =
-        Number(
-          appointment.priceCents,
+      const blockingPayment =
+        await getBlockingPaymentForAppointment(
+          appointmentId,
         );
 
-      if (
-        !Number.isInteger(
-          priceCents,
-        ) ||
-        priceCents <= 0
-      ) {
+      if (blockingPayment) {
+        const conflict =
+          getBlockingPaymentResponse(
+            blockingPayment,
+          );
+
+        return response
+          .status(
+            conflict.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              conflict.code,
+            message:
+              conflict.message,
+          });
+      }
+
+      // ========================================================
+      // LOCK ATÔMICO CONTRA DUAS CRIAÇÕES SIMULTÂNEAS
+      // ========================================================
+
+      appointmentReferenceForLock =
+        appointmentReference;
+
+      const paymentLock =
+        await acquirePaymentCreationLock({
+          appointmentReference:
+            appointmentReference,
+
+          uid:
+            uid,
+
+          method:
+            'pix',
+        });
+
+      if (!paymentLock.ok) {
+        return response
+          .status(
+            paymentLock.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              paymentLock.code,
+            message:
+              paymentLock.message,
+          });
+      }
+
+      paymentCreationLockId =
+        paymentLock.lockId;
+
+      const amounts =
+        getAppointmentAmount(
+          appointment,
+        );
+
+      if (!amounts) {
         return response
           .status(409)
           .json({
@@ -1134,39 +1846,10 @@ app.post(
           });
       }
 
-      const realAmount =
-        (
-          priceCents / 100
-        ).toFixed(2);
-
-      // ========================================================
-      // 8. VALOR DO SANDBOX
-      // ========================================================
-      //
-      // No teste oficial do Pix Orders API utilizaremos
-      // R$ 50,00 e comprador APRO.
-      //
-      // Em produção:
-      // amount = valor real do agendamento.
-      // ========================================================
-
-      const mercadoPagoAmount =
-        MERCADO_PAGO_TEST_MODE
-          ? '50.00'
-          : realAmount;
-
-      // ========================================================
-      // 9. E-MAIL DO PAGADOR
-      // ========================================================
-
       const payerEmail =
-        MERCADO_PAGO_TEST_MODE
-          ? 'test_user_br@testuser.com'
-          : String(
-              decodedToken.email || '',
-            )
-              .trim()
-              .toLowerCase();
+        getPayerEmail(
+          decodedToken,
+        );
 
       if (
         !MERCADO_PAGO_TEST_MODE &&
@@ -1183,35 +1866,13 @@ app.post(
           });
       }
 
-      // ========================================================
-      // 10. IDEMPOTÊNCIA
-      // ========================================================
-      //
-      // Para o mesmo usuário + agendamento + Pix,
-      // repetiremos a mesma chave.
-      //
-      // Assim dois toques acidentais não devem gerar
-      // duas cobranças independentes.
-      // ========================================================
-
       const idempotencyKey =
-        crypto
-          .createHash('sha256')
-          .update(
-            `pix:${uid}:${appointmentId}:v1`,
-          )
-          .digest('hex');
-
-      // ========================================================
-      // 11. REFERÊNCIA EXTERNA
-      // ========================================================
+        createIdempotencyKey(
+          `pix:${uid}:${appointmentId}:v1`,
+        );
 
       const externalReference =
         `j2i_appointment_${appointmentId}`;
-
-      // ========================================================
-      // 12. BODY MERCADO PAGO
-      // ========================================================
 
       const mercadoPagoBody = {
         type:
@@ -1224,7 +1885,8 @@ app.post(
           'automatic',
 
         total_amount:
-          mercadoPagoAmount,
+          amounts
+            .mercadoPagoAmount,
 
         payer: {
           email:
@@ -1235,7 +1897,8 @@ app.post(
           payments: [
             {
               amount:
-                mercadoPagoAmount,
+                amounts
+                  .mercadoPagoAmount,
 
               payment_method: {
                 id:
@@ -1245,7 +1908,6 @@ app.post(
                   'bank_transfer',
               },
 
-              // Pix válido por 30 minutos.
               expiration_time:
                 'PT30M',
             },
@@ -1253,7 +1915,6 @@ app.post(
         },
       };
 
-      // Cenário oficial de teste.
       if (
         MERCADO_PAGO_TEST_MODE
       ) {
@@ -1262,10 +1923,6 @@ app.post(
           .first_name =
           'APRO';
       }
-
-      // ========================================================
-      // 13. CHAMAR MERCADO PAGO
-      // ========================================================
 
       const mercadoPagoResponse =
         await fetch(
@@ -1295,23 +1952,10 @@ app.post(
           },
         );
 
-      const rawResponse =
-        await mercadoPagoResponse.text();
-
-      let mercadoPagoData;
-
-      try {
-        mercadoPagoData =
-          JSON.parse(
-            rawResponse,
-          );
-      } catch (_) {
-        mercadoPagoData = {};
-      }
-
-      // ========================================================
-      // 14. ERRO DO MERCADO PAGO
-      // ========================================================
+      const mercadoPagoData =
+        await readMercadoPagoResponse(
+          mercadoPagoResponse,
+        );
 
       if (
         !mercadoPagoResponse.ok
@@ -1346,10 +1990,6 @@ app.post(
           });
       }
 
-      // ========================================================
-      // 15. PEGAR O PAGAMENTO
-      // ========================================================
-
       const payment =
         mercadoPagoData
           .transactions
@@ -1383,8 +2023,99 @@ app.post(
       }
 
       // ========================================================
-      // 16. RETORNAR SOMENTE O NECESSÁRIO PARA O FLUTTER
+      // REGISTRAR PIX NO FIRESTORE
       // ========================================================
+
+      let paymentRecorded =
+        true;
+
+      let paymentRecordId =
+        null;
+
+      try {
+        const registration =
+          await registerPayment({
+            db:
+              db,
+
+            appointmentId:
+              appointmentId,
+
+            userId:
+              uid,
+
+            provider:
+              'mercado_pago',
+
+            method:
+              'pix',
+
+            orderId:
+              mercadoPagoData.id,
+
+            paymentId:
+              payment.id,
+
+            status:
+              payment.status || '',
+
+            statusDetail:
+              payment.status_detail || '',
+
+            amount:
+              amounts
+                .mercadoPagoAmount,
+
+            amountCents:
+              amounts.priceCents,
+
+            realAppointmentAmount:
+              amounts.realAmount,
+
+            realAppointmentAmountCents:
+              amounts.priceCents,
+
+            testMode:
+              MERCADO_PAGO_TEST_MODE,
+
+            paymentMethodId:
+              'pix',
+
+            paymentMethodType:
+              'bank_transfer',
+
+            installments:
+              1,
+          });
+
+        paymentRecordId =
+          registration
+            .paymentDocumentId;
+      } catch (error) {
+        paymentRecorded =
+          false;
+
+        // O Mercado Pago já pode ter criado/processado a cobrança.
+        // Mantemos o lock temporariamente para evitar uma segunda
+        // cobrança enquanto o Webhook tenta persistir os dados.
+        keepPaymentCreationLock =
+          true;
+
+        console.error(
+          'SAVE PIX PAYMENT ERROR:',
+          {
+            appointmentId:
+              appointmentId,
+
+            paymentId:
+              payment.id,
+
+            message:
+              error?.message ||
+              'Unknown error',
+          },
+        );
+      }
 
       return response.json({
         ok: true,
@@ -1398,6 +2129,12 @@ app.post(
         paymentId:
           payment.id,
 
+        paymentRecorded:
+          paymentRecorded,
+
+        paymentRecordId:
+          paymentRecordId,
+
         status:
           payment.status,
 
@@ -1405,17 +2142,20 @@ app.post(
           payment.status_detail,
 
         amount:
-          mercadoPagoAmount,
+          amounts
+            .mercadoPagoAmount,
 
         realAppointmentAmount:
-          realAmount,
+          amounts
+            .realAmount,
 
         testMode:
           MERCADO_PAGO_TEST_MODE,
 
         pix: {
           qrCode:
-            paymentMethod.qr_code,
+            paymentMethod
+              .qr_code,
 
           qrCodeBase64:
             paymentMethod
@@ -1458,12 +2198,852 @@ app.post(
           message:
             'Não foi possível gerar o pagamento Pix.',
         });
+    } finally {
+      if (
+        !keepPaymentCreationLock
+      ) {
+        await releasePaymentCreationLock({
+          appointmentReference:
+            appointmentReferenceForLock,
+
+          lockId:
+            paymentCreationLockId,
+        });
+      }
     }
   },
 );
 
 // ============================================================
-// TRATAMENTO DE ERRO
+// PAGAMENTOS - CRIAR CARTÃO
+// ============================================================
+
+app.post(
+  '/v1/payments/card',
+  async (request, response) => {
+    const idToken =
+      getBearerToken(
+        request,
+      );
+
+    if (!idToken) {
+      return response
+        .status(401)
+        .json({
+          ok: false,
+          code:
+            'UNAUTHORIZED',
+          message:
+            'Usuário não autenticado.',
+        });
+    }
+
+    const appointmentId =
+      String(
+        request.body?.appointmentId ||
+          '',
+      ).trim();
+
+    if (!appointmentId) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'APPOINTMENT_REQUIRED',
+          message:
+            'Agendamento não informado.',
+        });
+    }
+
+    // ==========================================================
+    // TOKEN DO CARTÃO
+    // ==========================================================
+
+    const cardToken =
+      String(
+        request.body?.cardToken ||
+          '',
+      ).trim();
+
+    if (
+      cardToken.length < 10 ||
+      cardToken.length > 512 ||
+      /\s/.test(cardToken)
+    ) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'INVALID_CARD_TOKEN',
+          message:
+            'Token do cartão inválido.',
+        });
+    }
+
+    const paymentMethodId =
+      String(
+        request.body
+          ?.paymentMethodId ||
+          '',
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      !/^[a-z0-9_-]{2,40}$/
+        .test(
+          paymentMethodId,
+        )
+    ) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'INVALID_PAYMENT_METHOD',
+          message:
+            'Meio de pagamento inválido.',
+        });
+    }
+
+    const paymentMethodType =
+      String(
+        request.body
+          ?.paymentMethodType ||
+          '',
+      )
+        .trim()
+        .toLowerCase();
+
+    const allowedPaymentMethodTypes =
+      new Set([
+        'credit_card',
+        'debit_card',
+        'prepaid_card',
+      ]);
+
+    if (
+      !allowedPaymentMethodTypes
+        .has(
+          paymentMethodType,
+        )
+    ) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'INVALID_PAYMENT_METHOD_TYPE',
+          message:
+            'Tipo de cartão inválido.',
+        });
+    }
+
+    const installments =
+      Number(
+        request.body?.installments,
+      );
+
+    if (
+      !Number.isInteger(
+        installments,
+      ) ||
+      installments < 1 ||
+      installments > 24
+    ) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'INVALID_INSTALLMENTS',
+          message:
+            'Quantidade de parcelas inválida.',
+        });
+    }
+
+    if (
+      paymentMethodType !==
+        'credit_card' &&
+      installments !== 1
+    ) {
+      return response
+        .status(400)
+        .json({
+          ok: false,
+          code:
+            'INVALID_INSTALLMENTS_FOR_CARD_TYPE',
+          message:
+            'Cartão de débito ou pré-pago deve ser pago em uma parcela.',
+        });
+    }
+
+    let paymentCreationLockId =
+      null;
+
+    let appointmentReferenceForLock =
+      null;
+
+    let keepPaymentCreationLock =
+      false;
+
+    try {
+      const decodedToken =
+        await auth.verifyIdToken(
+          idToken,
+          true,
+        );
+
+      const uid =
+        decodedToken.uid;
+
+      const appointmentReference =
+        db
+          .collection('appointments')
+          .doc(appointmentId);
+
+      const appointmentSnapshot =
+        await appointmentReference.get();
+
+      if (
+        !appointmentSnapshot.exists
+      ) {
+        return response
+          .status(404)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_NOT_FOUND',
+            message:
+              'Agendamento não encontrado.',
+          });
+      }
+
+      const appointment =
+        appointmentSnapshot.data();
+
+      if (!appointment) {
+        return response
+          .status(404)
+          .json({
+            ok: false,
+            code:
+              'APPOINTMENT_NOT_FOUND',
+            message:
+              'Dados do agendamento não encontrados.',
+          });
+      }
+
+      if (
+        appointment.userId !==
+        uid
+      ) {
+        return response
+          .status(403)
+          .json({
+            ok: false,
+            code:
+              'FORBIDDEN',
+            message:
+              'Você não possui acesso a este agendamento.',
+          });
+      }
+
+      const paymentEligibility =
+        await validateAppointmentForPayment({
+          appointmentReference:
+            appointmentReference,
+
+          appointment:
+            appointment,
+        });
+
+      if (!paymentEligibility.ok) {
+        return response
+          .status(
+            paymentEligibility.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              paymentEligibility.code,
+            message:
+              paymentEligibility.message,
+          });
+      }
+
+      // ========================================================
+      // IMPEDIR COBRANÇA DUPLICADA
+      // ========================================================
+
+      const blockingPayment =
+        await getBlockingPaymentForAppointment(
+          appointmentId,
+        );
+
+      if (blockingPayment) {
+        const conflict =
+          getBlockingPaymentResponse(
+            blockingPayment,
+          );
+
+        return response
+          .status(
+            conflict.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              conflict.code,
+            message:
+              conflict.message,
+          });
+      }
+
+      // ========================================================
+      // LOCK ATÔMICO CONTRA DUAS CRIAÇÕES SIMULTÂNEAS
+      // ========================================================
+
+      appointmentReferenceForLock =
+        appointmentReference;
+
+      const paymentLock =
+        await acquirePaymentCreationLock({
+          appointmentReference:
+            appointmentReference,
+
+          uid:
+            uid,
+
+          method:
+            'card',
+        });
+
+      if (!paymentLock.ok) {
+        return response
+          .status(
+            paymentLock.statusCode,
+          )
+          .json({
+            ok: false,
+            code:
+              paymentLock.code,
+            message:
+              paymentLock.message,
+          });
+      }
+
+      paymentCreationLockId =
+        paymentLock.lockId;
+
+      const amounts =
+        getAppointmentAmount(
+          appointment,
+        );
+
+      if (!amounts) {
+        return response
+          .status(409)
+          .json({
+            ok: false,
+            code:
+              'INVALID_APPOINTMENT_PRICE',
+            message:
+              'O agendamento não possui um valor válido.',
+          });
+      }
+
+      const payerEmail =
+        getPayerEmail(
+          decodedToken,
+        );
+
+      if (
+        !MERCADO_PAGO_TEST_MODE &&
+        !payerEmail
+      ) {
+        return response
+          .status(409)
+          .json({
+            ok: false,
+            code:
+              'EMAIL_REQUIRED',
+            message:
+              'A conta não possui e-mail válido.',
+          });
+      }
+
+      const cardTokenFingerprint =
+        hashToken(
+          cardToken,
+        );
+
+      const idempotencyKey =
+        createIdempotencyKey(
+          'card:'
+          + `${uid}:`
+          + `${appointmentId}:`
+          + `${cardTokenFingerprint}:v1`,
+        );
+
+      const externalReference =
+        `j2i_appointment_${appointmentId}`;
+
+      const mercadoPagoBody = {
+        type:
+          'online',
+
+        external_reference:
+          externalReference,
+
+        processing_mode:
+          'automatic',
+
+        total_amount:
+          amounts
+            .mercadoPagoAmount,
+
+        payer: {
+          email:
+            payerEmail,
+        },
+
+        transactions: {
+          payments: [
+            {
+              amount:
+                amounts
+                  .mercadoPagoAmount,
+
+              payment_method: {
+                id:
+                  paymentMethodId,
+
+                type:
+                  paymentMethodType,
+
+                token:
+                  cardToken,
+
+                installments:
+                  installments,
+              },
+            },
+          ],
+        },
+      };
+
+      const mercadoPagoResponse =
+        await fetch(
+          MERCADO_PAGO_ORDERS_URL,
+          {
+            method:
+              'POST',
+
+            headers: {
+              Accept:
+                'application/json',
+
+              'Content-Type':
+                'application/json',
+
+              Authorization:
+                `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+
+              'X-Idempotency-Key':
+                idempotencyKey,
+            },
+
+            body:
+              JSON.stringify(
+                mercadoPagoBody,
+              ),
+          },
+        );
+
+      const mercadoPagoData =
+        await readMercadoPagoResponse(
+          mercadoPagoResponse,
+        );
+
+      if (
+        !mercadoPagoResponse.ok
+      ) {
+        console.error(
+          'MERCADO PAGO CARD ERROR:',
+          {
+            status:
+              mercadoPagoResponse
+                .status,
+
+            appointmentId:
+              appointmentId,
+
+            paymentMethodId:
+              paymentMethodId,
+
+            paymentMethodType:
+              paymentMethodType,
+
+            installments:
+              installments,
+
+            mercadoPagoError:
+              mercadoPagoData
+                ?.error ||
+              mercadoPagoData
+                ?.code ||
+              null,
+
+            mercadoPagoMessage:
+              mercadoPagoData
+                ?.message ||
+              null,
+          },
+        );
+
+        return response
+          .status(502)
+          .json({
+            ok: false,
+
+            code:
+              'MERCADO_PAGO_CARD_ERROR',
+
+            message:
+              'Não foi possível processar o cartão.',
+
+            mercadoPagoStatus:
+              mercadoPagoResponse
+                .status,
+          });
+      }
+
+      const payment =
+        mercadoPagoData
+          .transactions
+          ?.payments?.[0];
+
+      if (
+        !mercadoPagoData.id ||
+        !payment?.id
+      ) {
+        console.error(
+          'INVALID MERCADO PAGO CARD RESPONSE:',
+          {
+            appointmentId:
+              appointmentId,
+
+            hasOrderId:
+              Boolean(
+                mercadoPagoData.id,
+              ),
+
+            hasPaymentId:
+              Boolean(
+                payment?.id,
+              ),
+          },
+        );
+
+        return response
+          .status(502)
+          .json({
+            ok: false,
+
+            code:
+              'INVALID_CARD_RESPONSE',
+
+            message:
+              'O Mercado Pago não retornou os dados completos do pagamento.',
+          });
+      }
+
+      const paymentStatus =
+        String(
+          payment.status ||
+          mercadoPagoData.status ||
+          '',
+        );
+
+      const paymentStatusDetail =
+        String(
+          payment.status_detail ||
+          mercadoPagoData
+            .status_detail ||
+          '',
+        );
+
+      const approved =
+        paymentStatus ===
+          'processed' &&
+        paymentStatusDetail ===
+          'accredited';
+
+      const requiresAction =
+        paymentStatus ===
+        'action_required';
+
+      let paymentRecorded =
+        true;
+
+      let paymentRecordId =
+        null;
+
+      try {
+        const registration =
+          await registerPayment({
+            db:
+              db,
+
+            appointmentId:
+              appointmentId,
+
+            userId:
+              uid,
+
+            provider:
+              'mercado_pago',
+
+            method:
+              'card',
+
+            orderId:
+              mercadoPagoData.id,
+
+            paymentId:
+              payment.id,
+
+            status:
+              paymentStatus,
+
+            statusDetail:
+              paymentStatusDetail,
+
+            amount:
+              amounts
+                .mercadoPagoAmount,
+
+            amountCents:
+              amounts.priceCents,
+
+            realAppointmentAmount:
+              amounts.realAmount,
+
+            realAppointmentAmountCents:
+              amounts.priceCents,
+
+            testMode:
+              MERCADO_PAGO_TEST_MODE,
+
+            paymentMethodId:
+              payment
+                ?.payment_method
+                ?.id ||
+              paymentMethodId,
+
+            paymentMethodType:
+              payment
+                ?.payment_method
+                ?.type ||
+              paymentMethodType,
+
+            installments:
+              Number(
+                payment
+                  ?.payment_method
+                  ?.installments ||
+                installments,
+              ),
+          });
+
+        paymentRecordId =
+          registration
+            .paymentDocumentId;
+      } catch (error) {
+        paymentRecorded =
+          false;
+
+        keepPaymentCreationLock =
+          true;
+
+        console.error(
+          'SAVE CARD PAYMENT ERROR:',
+          {
+            appointmentId:
+              appointmentId,
+
+            paymentId:
+              payment.id,
+
+            message:
+              error?.message ||
+              'Unknown error',
+          },
+        );
+      }
+
+      return response.json({
+        ok: true,
+
+        appointmentId:
+          appointmentId,
+
+        orderId:
+          mercadoPagoData.id,
+
+        paymentId:
+          payment.id,
+
+        paymentRecorded:
+          paymentRecorded,
+
+        paymentRecordId:
+          paymentRecordId,
+
+        status:
+          paymentStatus,
+
+        statusDetail:
+          paymentStatusDetail,
+
+        orderStatus:
+          mercadoPagoData
+            .status ||
+          '',
+
+        orderStatusDetail:
+          mercadoPagoData
+            .status_detail ||
+          '',
+
+        approved:
+          approved,
+
+        requiresAction:
+          requiresAction,
+
+        amount:
+          amounts
+            .mercadoPagoAmount,
+
+        realAppointmentAmount:
+          amounts
+            .realAmount,
+
+        testMode:
+          MERCADO_PAGO_TEST_MODE,
+
+        card: {
+          paymentMethodId:
+            payment
+              ?.payment_method
+              ?.id ||
+            paymentMethodId,
+
+          paymentMethodType:
+            payment
+              ?.payment_method
+              ?.type ||
+            paymentMethodType,
+
+          installments:
+            Number(
+              payment
+                ?.payment_method
+                ?.installments ||
+              installments,
+            ),
+        },
+      });
+    } catch (error) {
+      console.error(
+        'CREATE CARD PAYMENT ERROR:',
+        {
+          name:
+            error?.name ||
+            'Error',
+
+          code:
+            error?.code ||
+            null,
+
+          message:
+            error?.message ||
+            'Unknown error',
+
+          appointmentId:
+            appointmentId,
+        },
+      );
+
+      if (
+        error?.code ===
+        'auth/id-token-revoked'
+      ) {
+        return response
+          .status(401)
+          .json({
+            ok: false,
+
+            code:
+              'TOKEN_REVOKED',
+
+            message:
+              'Sua sessão expirou. Entre novamente.',
+          });
+      }
+
+      if (
+        error?.code ===
+          'auth/id-token-expired' ||
+        error?.code ===
+          'auth/argument-error'
+      ) {
+        return response
+          .status(401)
+          .json({
+            ok: false,
+
+            code:
+              'UNAUTHORIZED',
+
+            message:
+              'Sua sessão não é mais válida. Entre novamente.',
+          });
+      }
+
+      return response
+        .status(500)
+        .json({
+          ok: false,
+
+          code:
+            'CREATE_CARD_PAYMENT_ERROR',
+
+          message:
+            'Não foi possível processar o pagamento com cartão.',
+        });
+    } finally {
+      if (
+        !keepPaymentCreationLock
+      ) {
+        await releasePaymentCreationLock({
+          appointmentReference:
+            appointmentReferenceForLock,
+
+          lockId:
+            paymentCreationLockId,
+        });
+      }
+    }
+  },
+);
+
+// ============================================================
+// TRATAMENTO GLOBAL DE ERRO
 // ============================================================
 
 app.use(
@@ -1490,8 +3070,10 @@ app.use(
       .status(500)
       .json({
         ok: false,
+
         code:
           'INTERNAL_ERROR',
+
         message:
           'Erro interno do servidor.',
       });

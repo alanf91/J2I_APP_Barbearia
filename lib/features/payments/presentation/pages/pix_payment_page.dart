@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import 'package:j2i_app_barbearia/features/payments/data/models/pix_payment_result.dart';
 import 'package:j2i_app_barbearia/features/payments/data/repositories/pix_payment_repository.dart';
-import 'package:j2i_app_barbearia/features/payments/data/services/mercado_pago_native_bridge.dart';
 
 class PixPaymentPage extends StatefulWidget {
   final String appointmentId;
@@ -27,105 +26,6 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   PixPaymentResult? _payment;
 
   String? _errorMessage;
-
-  // ============================================================
-  // TESTE MERCADO PAGO ANDROID
-  // ETAPA 30.3
-  // ============================================================
-
-  Future<void> _testMercadoPagoAndroid() async {
-    final ready = await MercadoPagoNativeBridge.isReady();
-
-    if (!mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ready
-              ? 'Mercado Pago Android: OK'
-              : 'Mercado Pago Android: NÃO INICIALIZADO',
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // TESTE TOKENIZAÇÃO DO CARTÃO
-  // ETAPA 30.4
-  // ============================================================
-
-  Future<void> _testCardTokenization() async {
-    try {
-      final token =
-          await MercadoPagoNativeBridge.createCardToken();
-
-      if (!mounted) {
-        return;
-      }
-
-      // O usuário fechou/cancelou a tela nativa.
-      if (token == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Tokenização do cartão cancelada.',
-            ),
-          ),
-        );
-
-        return;
-      }
-
-      // IMPORTANTE:
-      // Não exibimos o token e não fazemos print dele.
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Token do cartão gerado com sucesso.',
-          ),
-        ),
-      );
-    } on PlatformException catch (e) {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            e.message ??
-                'Não foi possível gerar o token do cartão.',
-          ),
-        ),
-      );
-    } on MissingPluginException {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'A ponte nativa do Mercado Pago não foi encontrada.',
-          ),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Não foi possível gerar o token do cartão.',
-          ),
-        ),
-      );
-    }
-  }
 
   // ============================================================
   // GERAR PIX
@@ -170,8 +70,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 
       setState(() {
         _isLoading = false;
-        _errorMessage =
-            'Não foi possível gerar o pagamento.';
+        _errorMessage = 'Não foi possível gerar o pagamento.';
       });
     }
   }
@@ -183,8 +82,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   Future<void> _copyPix() async {
     final payment = _payment;
 
-    if (payment == null ||
-        payment.qrCode.isEmpty) {
+    if (payment == null || payment.qrCode.isEmpty) {
       return;
     }
 
@@ -219,17 +117,10 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
     }
 
     try {
-      var normalized =
-          value.trim();
+      var normalized = value.trim();
 
-      // Também aceita:
-      //
-      // data:image/png;base64,AAAA...
       if (normalized.contains(',')) {
-        normalized =
-            normalized
-                .split(',')
-                .last;
+        normalized = normalized.split(',').last;
       }
 
       return base64Decode(
@@ -247,8 +138,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   String _formatAmount(
     String value,
   ) {
-    final number =
-        double.tryParse(value);
+    final number = double.tryParse(value);
 
     if (number == null) {
       return value;
@@ -259,22 +149,18 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   }
 
   // ============================================================
-  // STATUS PIX
+  // STATUS
   // ============================================================
 
   String _statusText(
     PixPaymentResult payment,
   ) {
-    if (payment.status ==
-            'action_required' &&
-        payment.statusDetail ==
-            'waiting_transfer') {
+    if (payment.status == 'action_required' &&
+        payment.statusDetail == 'waiting_transfer') {
       return 'Aguardando pagamento';
     }
 
-    return payment
-            .statusDetail
-            .isNotEmpty
+    return payment.statusDetail.isNotEmpty
         ? payment.statusDetail
         : payment.status;
   }
@@ -287,8 +173,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   Widget build(
     BuildContext context,
   ) {
-    final payment =
-        _payment;
+    final payment = _payment;
 
     return Scaffold(
       appBar: AppBar(
@@ -298,77 +183,38 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
       ),
       body: SafeArea(
         child: ListView(
-          padding:
-              const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(20),
           children: [
-            const SizedBox(
-              height: 10,
-            ),
+            const SizedBox(height: 10),
 
             const Icon(
               Icons.pix,
               size: 72,
             ),
 
-            const SizedBox(
-              height: 18,
-            ),
+            const SizedBox(height: 18),
 
             const Text(
               'Pague com Pix',
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 26,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
               ),
             ),
 
-            const SizedBox(
-              height: 10,
-            ),
+            const SizedBox(height: 10),
 
             const Text(
               'Gere o QR Code e conclua '
               'o pagamento pelo aplicativo '
               'do seu banco.',
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
             ),
 
-            const SizedBox(
-              height: 28,
-            ),
+            const SizedBox(height: 28),
 
-            // ==================================================
-            // TESTES TEMPORÁRIOS - DESENVOLVIMENTO
-            // ==================================================
-
-            _buildMercadoPagoAndroidTestButton(),
-
-            const SizedBox(
-              height: 12,
-            ),
-
-            _buildCardTokenizationTestButton(),
-
-            const SizedBox(
-              height: 20,
-            ),
-
-            const Divider(),
-
-            const SizedBox(
-              height: 20,
-            ),
-
-            // ==================================================
-            // PIX
-            // ==================================================
-
-            if (payment == null &&
-                !_isLoading)
+            if (payment == null && !_isLoading)
               _buildGenerateButton(),
 
             if (_isLoading)
@@ -388,59 +234,14 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   }
 
   // ============================================================
-  // TESTAR SDK ANDROID
-  // ETAPA 30.3
-  // ============================================================
-
-  Widget
-      _buildMercadoPagoAndroidTestButton() {
-    return SizedBox(
-      height: 54,
-      child: OutlinedButton.icon(
-        onPressed:
-            _testMercadoPagoAndroid,
-        icon: const Icon(
-          Icons.android,
-        ),
-        label: const Text(
-          'TESTAR MERCADO PAGO ANDROID',
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // TESTAR TOKENIZAÇÃO
-  // ETAPA 30.4
-  // ============================================================
-
-  Widget
-      _buildCardTokenizationTestButton() {
-    return SizedBox(
-      height: 54,
-      child: FilledButton.icon(
-        onPressed:
-            _testCardTokenization,
-        icon: const Icon(
-          Icons.credit_card,
-        ),
-        label: const Text(
-          'TESTAR TOKENIZAÇÃO DO CARTÃO',
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // BOTÃO GERAR PIX
+  // GERAR PIX
   // ============================================================
 
   Widget _buildGenerateButton() {
     return SizedBox(
       height: 54,
       child: FilledButton.icon(
-        onPressed:
-            _generatePix,
+        onPressed: _generatePix,
         icon: const Icon(
           Icons.pix,
         ),
@@ -457,17 +258,14 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 
   Widget _buildLoading() {
     return const Padding(
-      padding:
-          EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         vertical: 50,
       ),
       child: Column(
         children: [
           CircularProgressIndicator(),
 
-          SizedBox(
-            height: 18,
-          ),
+          SizedBox(height: 18),
 
           Text(
             'Gerando pagamento Pix...',
@@ -483,39 +281,27 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 
   Widget _buildError() {
     return Column(
-      crossAxisAlignment:
-          CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding:
-              const EdgeInsets.all(
-            16,
-          ),
-          decoration:
-              BoxDecoration(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
             color: Theme.of(context)
                 .colorScheme
                 .errorContainer,
-            borderRadius:
-                BorderRadius.circular(
-              12,
-            ),
+            borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
                 Icons.error_outline,
-                color:
-                    Theme.of(context)
-                        .colorScheme
-                        .onErrorContainer,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onErrorContainer,
               ),
 
-              const SizedBox(
-                width: 10,
-              ),
+              const SizedBox(width: 10),
 
               Expanded(
                 child: Text(
@@ -526,13 +312,10 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(
-          height: 18,
-        ),
+        const SizedBox(height: 18),
 
         FilledButton(
-          onPressed:
-              _generatePix,
+          onPressed: _generatePix,
           child: const Text(
             'TENTAR NOVAMENTE',
           ),
@@ -548,14 +331,12 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   Widget _buildPayment(
     PixPaymentResult payment,
   ) {
-    final qrImage =
-        _decodeQrCodeImage(
+    final qrImage = _decodeQrCodeImage(
       payment.qrCodeBase64,
     );
 
     return Column(
-      crossAxisAlignment:
-          CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ======================================================
         // AMBIENTE DE TESTE
@@ -563,31 +344,20 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 
         if (payment.testMode) ...[
           Container(
-            padding:
-                const EdgeInsets.all(
-              12,
-            ),
-            decoration:
-                BoxDecoration(
-              color:
-                  Theme.of(context)
-                      .colorScheme
-                      .secondaryContainer,
-              borderRadius:
-                  BorderRadius.circular(
-                12,
-              ),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context)
+                  .colorScheme
+                  .secondaryContainer,
+              borderRadius: BorderRadius.circular(12),
             ),
             child: const Row(
               children: [
                 Icon(
-                  Icons
-                      .science_outlined,
+                  Icons.science_outlined,
                 ),
 
-                SizedBox(
-                  width: 10,
-                ),
+                SizedBox(width: 10),
 
                 Expanded(
                   child: Text(
@@ -599,9 +369,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
             ),
           ),
 
-          const SizedBox(
-            height: 20,
-          ),
+          const SizedBox(height: 20),
         ],
 
         // ======================================================
@@ -610,48 +378,35 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 
         const Text(
           'Valor do Pix',
-          textAlign:
-              TextAlign.center,
+          textAlign: TextAlign.center,
         ),
 
-        const SizedBox(
-          height: 4,
-        ),
+        const SizedBox(height: 4),
 
         Text(
           _formatAmount(
             payment.amount,
           ),
-          textAlign:
-              TextAlign.center,
-          style:
-              const TextStyle(
+          textAlign: TextAlign.center,
+          style: const TextStyle(
             fontSize: 30,
-            fontWeight:
-                FontWeight.bold,
+            fontWeight: FontWeight.bold,
           ),
         ),
 
-        const SizedBox(
-          height: 8,
-        ),
+        const SizedBox(height: 8),
 
         Text(
           _statusText(
             payment,
           ),
-          textAlign:
-              TextAlign.center,
-          style:
-              const TextStyle(
-            fontWeight:
-                FontWeight.w600,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
           ),
         ),
 
-        const SizedBox(
-          height: 24,
-        ),
+        const SizedBox(height: 24),
 
         // ======================================================
         // QR CODE
@@ -660,26 +415,17 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
         if (qrImage != null)
           Center(
             child: Container(
-              padding:
-                  const EdgeInsets.all(
-                14,
-              ),
-              decoration:
-                  BoxDecoration(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius:
-                    BorderRadius.circular(
-                  16,
-                ),
+                borderRadius: BorderRadius.circular(16),
               ),
               child: Image.memory(
                 qrImage,
                 width: 240,
                 height: 240,
-                fit:
-                    BoxFit.contain,
-                gaplessPlayback:
-                    true,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
               ),
             ),
           )
@@ -691,78 +437,56 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
             ),
           ),
 
-        const SizedBox(
-          height: 24,
-        ),
+        const SizedBox(height: 24),
 
         // ======================================================
-        // COPIA E COLA
+        // PIX COPIA E COLA
         // ======================================================
 
         const Text(
           'Pix Copia e Cola',
           style: TextStyle(
-            fontWeight:
-                FontWeight.bold,
+            fontWeight: FontWeight.bold,
           ),
         ),
 
-        const SizedBox(
-          height: 8,
-        ),
+        const SizedBox(height: 8),
 
         Container(
-          padding:
-              const EdgeInsets.all(
-            12,
-          ),
-          decoration:
-              BoxDecoration(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
             border: Border.all(
-              color:
-                  Theme.of(context)
-                      .colorScheme
-                      .outlineVariant,
+              color: Theme.of(context)
+                  .colorScheme
+                  .outlineVariant,
             ),
-            borderRadius:
-                BorderRadius.circular(
-              12,
-            ),
+            borderRadius: BorderRadius.circular(12),
           ),
-          child:
-              SelectableText(
+          child: SelectableText(
             payment.qrCode,
             maxLines: 4,
           ),
         ),
 
-        const SizedBox(
-          height: 14,
-        ),
+        const SizedBox(height: 14),
 
         SizedBox(
           height: 52,
-          child:
-              FilledButton.icon(
-            onPressed:
-                _copyPix,
-            icon:
-                const Icon(
+          child: FilledButton.icon(
+            onPressed: _copyPix,
+            icon: const Icon(
               Icons.copy,
             ),
-            label:
-                const Text(
+            label: const Text(
               'COPIAR PIX',
             ),
           ),
         ),
 
-        const SizedBox(
-          height: 26,
-        ),
+        const SizedBox(height: 26),
 
         // ======================================================
-        // INFORMAÇÕES TÉCNICAS DE DEV
+        // INFORMAÇÕES DE TESTE
         // ======================================================
 
         if (payment.testMode)
@@ -770,48 +494,36 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
             title: const Text(
               'Dados do teste',
             ),
-            childrenPadding:
-                const EdgeInsets.only(
+            childrenPadding: const EdgeInsets.only(
               left: 16,
               right: 16,
               bottom: 16,
             ),
             children: [
               _InfoRow(
-                label:
-                    'Order ID',
-                value:
-                    payment.orderId,
+                label: 'Order ID',
+                value: payment.orderId,
               ),
 
               _InfoRow(
-                label:
-                    'Payment ID',
-                value:
-                    payment.paymentId,
+                label: 'Payment ID',
+                value: payment.paymentId,
               ),
 
               _InfoRow(
-                label:
-                    'Status',
-                value:
-                    payment.status,
+                label: 'Status',
+                value: payment.status,
               ),
 
               _InfoRow(
-                label:
-                    'Status detail',
-                value:
-                    payment.statusDetail,
+                label: 'Status detail',
+                value: payment.statusDetail,
               ),
 
               _InfoRow(
-                label:
-                    'Valor real do serviço',
-                value:
-                    _formatAmount(
-                  payment
-                      .realAppointmentAmount,
+                label: 'Valor real do serviço',
+                value: _formatAmount(
+                  payment.realAppointmentAmount,
                 ),
               ),
             ],
@@ -825,10 +537,8 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 // LINHA DE INFORMAÇÃO
 // ============================================================
 
-class _InfoRow
-    extends StatelessWidget {
+class _InfoRow extends StatelessWidget {
   final String label;
-
   final String value;
 
   const _InfoRow({
@@ -841,29 +551,24 @@ class _InfoRow
     BuildContext context,
   ) {
     return Padding(
-      padding:
-          const EdgeInsets.only(
+      padding: const EdgeInsets.only(
         bottom: 8,
       ),
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 120,
             child: Text(
               '$label:',
-              style:
-                  const TextStyle(
-                fontWeight:
-                    FontWeight.w600,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
 
           Expanded(
-            child:
-                SelectableText(
+            child: SelectableText(
               value,
             ),
           ),

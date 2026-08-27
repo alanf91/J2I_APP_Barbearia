@@ -1,38 +1,45 @@
 import 'package:flutter/material.dart';
 
-import 'package:j2i_app_barbearia/features/payments/presentation/pages/pix_payment_page.dart';
+import 'package:j2i_app_barbearia/features/payments/presentation/payment_method_page.dart';
 
 class AppointmentSuccessPage extends StatelessWidget {
   final String appointmentId;
 
-  const AppointmentSuccessPage({super.key, required this.appointmentId});
+  const AppointmentSuccessPage({
+    super.key,
+    required this.appointmentId,
+  });
 
   // ============================================================
-  // ABRIR PAGAMENTO PIX
+  // ABRIR ESCOLHA DA FORMA DE PAGAMENTO
   // ============================================================
 
-  Future<void> _openPixPayment(BuildContext context) async {
+  Future<void> _openPaymentMethod(
+    BuildContext context,
+  ) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PixPaymentPage(appointmentId: appointmentId),
+        builder: (_) => PaymentMethodPage(
+          appointmentId: appointmentId,
+        ),
       ),
     );
   }
 
   // ============================================================
-  // VOLTAR PARA O INÍCIO
+  // BUILD
   // ============================================================
 
-  void _goHome(BuildContext context) {
-    Navigator.of(context).popUntil((route) => route.isFirst);
-  }
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    BuildContext context,
+  ) {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: const Text('Agendamento realizado'),
+        title: const Text(
+          'Agendamento realizado',
+        ),
       ),
       body: SafeArea(
         child: Center(
@@ -41,23 +48,36 @@ class AppointmentSuccessPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.check_circle_outline, size: 100),
+                // ==================================================
+                // SUCESSO
+                // ==================================================
+
+                const Icon(
+                  Icons.check_circle_outline,
+                  size: 100,
+                ),
 
                 const SizedBox(height: 28),
 
                 const Text(
                   'Horário reservado!',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
 
                 const SizedBox(height: 14),
 
                 const Text(
                   'Seu horário foi reservado. '
-                  'Agora você pode realizar o pagamento.',
+                  'Agora escolha a forma de pagamento '
+                  'para concluir.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16),
+                  style: TextStyle(
+                    fontSize: 16,
+                  ),
                 ),
 
                 const SizedBox(height: 30),
@@ -65,19 +85,22 @@ class AppointmentSuccessPage extends StatelessWidget {
                 // ==================================================
                 // AVISO PAGAMENTO
                 // ==================================================
+
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: const Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.payments_outlined),
+                      Icon(
+                        Icons.payments_outlined,
+                      ),
 
                       SizedBox(width: 12),
 
@@ -94,43 +117,39 @@ class AppointmentSuccessPage extends StatelessWidget {
                 const SizedBox(height: 26),
 
                 // ==================================================
-                // PIX
+                // ESCOLHER FORMA DE PAGAMENTO
                 // ==================================================
+
                 SizedBox(
                   width: double.infinity,
-                  height: 54,
+                  height: 56,
                   child: FilledButton.icon(
                     onPressed: () {
-                      _openPixPayment(context);
+                      _openPaymentMethod(
+                        context,
+                      );
                     },
-                    icon: const Icon(Icons.pix),
-                    label: const Text('PAGAR COM PIX'),
+                    icon: const Icon(
+                      Icons.payment,
+                    ),
+                    label: const Text(
+                      'ESCOLHER FORMA DE PAGAMENTO',
+                    ),
                   ),
                 ),
 
-                const SizedBox(height: 14),
+                const SizedBox(height: 20),
 
                 // ==================================================
-                // HOME
+                // ID - DESENVOLVIMENTO
                 // ==================================================
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      _goHome(context);
-                    },
-                    icon: const Icon(Icons.home_outlined),
-                    label: const Text('PAGAR DEPOIS'),
-                  ),
-                ),
-
-                const SizedBox(height: 16),
 
                 Text(
                   'Agendamento: $appointmentId',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall,
                 ),
               ],
             ),
