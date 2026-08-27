@@ -10,7 +10,10 @@ class PixPaymentException implements Exception {
   final String message;
   final String? code;
 
-  const PixPaymentException(this.message, {this.code});
+  const PixPaymentException(
+    this.message, {
+    this.code,
+  });
 
   @override
   String toString() {
@@ -20,21 +23,35 @@ class PixPaymentException implements Exception {
 
 class PixPaymentRepository {
   // Android Emulator -> computador Windows.
-  static const String _baseUrl = 'http://10.0.2.2:8080';
+  static const String _baseUrl =
+      'http://10.0.2.2:8080';
 
   final FirebaseAuth _auth;
 
-  PixPaymentRepository({FirebaseAuth? auth})
-    : _auth = auth ?? FirebaseAuth.instance;
+  PixPaymentRepository({
+    FirebaseAuth? auth,
+  }) : _auth =
+            auth ??
+            FirebaseAuth.instance;
 
-  Future<PixPaymentResult> createPix({required String appointmentId}) async {
-    final normalizedAppointmentId = appointmentId.trim();
+  // ============================================================
+  // CRIAR / RECUPERAR PIX
+  // ============================================================
+
+  Future<PixPaymentResult> createPix({
+    required String appointmentId,
+  }) async {
+    final normalizedAppointmentId =
+        appointmentId.trim();
 
     if (normalizedAppointmentId.isEmpty) {
-      throw const PixPaymentException('Agendamento inválido.');
+      throw const PixPaymentException(
+        'Agendamento inválido.',
+      );
     }
 
-    final user = _auth.currentUser;
+    final user =
+        _auth.currentUser;
 
     if (user == null) {
       throw const PixPaymentException(
@@ -44,79 +61,226 @@ class PixPaymentRepository {
     }
 
     try {
-      final idToken = await user.getIdToken(true);
+      // ========================================================
+      // TOKEN FIREBASE
+      // ========================================================
 
-      if (idToken == null || idToken.isEmpty) {
-        throw const PixPaymentException('Não foi possível validar sua sessão.');
-      }
+      final idToken =
+          await user.getIdToken(true);
 
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/v1/payments/pix'),
-            headers: {
-              'Content-Type': 'application/json; charset=UTF-8',
-              'Authorization': 'Bearer $idToken',
-            },
-            body: jsonEncode({'appointmentId': normalizedAppointmentId}),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      final data = _decodeResponse(response);
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw PixPaymentException(
-          _readMessage(data, fallback: 'Não foi possível gerar o Pix.'),
-          code: data['code']?.toString(),
+      if (
+        idToken == null ||
+        idToken.isEmpty
+      ) {
+        throw const PixPaymentException(
+          'Não foi possível validar sua sessão.',
         );
       }
+
+      // ========================================================
+      // BACKEND
+      // ========================================================
+
+      final response =
+          await http
+              .post(
+                Uri.parse(
+                  '$_baseUrl/v1/payments/pix',
+                ),
+                headers: {
+                  'Content-Type':
+                      'application/json; charset=UTF-8',
+
+                  'Authorization':
+                      'Bearer $idToken',
+                },
+                body: jsonEncode({
+                  'appointmentId':
+                      normalizedAppointmentId,
+                }),
+              )
+              .timeout(
+                const Duration(
+                  seconds: 20,
+                ),
+              );
+
+      // ========================================================
+      // DECODIFICAR RESPOSTA
+      // ========================================================
+
+      final data =
+          _decodeResponse(
+        response,
+      );
+
+      // ========================================================
+      // ERRO HTTP
+      // ========================================================
+
+      if (
+        response.statusCode < 200 ||
+        response.statusCode >= 300
+      ) {
+        throw PixPaymentException(
+          _readMessage(
+            data,
+            fallback:
+                'Não foi possível gerar o Pix.',
+          ),
+          code:
+              data['code']
+                  ?.toString(),
+        );
+      }
+
+      // ========================================================
+      // BACKEND NÃO CONFIRMOU
+      // ========================================================
 
       if (data['ok'] != true) {
-        throw const PixPaymentException(
-          'O servidor não confirmou '
-          'a criação do Pix.',
+        throw PixPaymentException(
+          _readMessage(
+            data,
+            fallback:
+                'O servidor não confirmou o pagamento Pix.',
+          ),
+          code:
+              data['code']
+                  ?.toString(),
         );
       }
 
-      final result = PixPaymentResult.fromMap(data);
+      // ========================================================
+      // CONVERTER RESPOSTA
+      // ========================================================
 
-      if (result.orderId.isEmpty ||
-          result.paymentId.isEmpty ||
-          result.qrCode.isEmpty) {
+      final result =
+          PixPaymentResult.fromMap(
+        data,
+      );
+
+      // ========================================================
+      // VALIDAR CAMPOS REALMENTE NECESSÁRIOS
+      // ========================================================
+      //
+      // qrCodeBase64 NÃO é obrigatório.
+      // ticketUrl NÃO é obrigatório.
+      //
+      // O aplicativo desenha o QR usando qrCode.
+      //
+      // ========================================================
+
+      final missingFields =
+          <String>[];
+
+      if (result.orderId.trim().isEmpty) {
+        missingFields.add(
+          'orderId',
+        );
+      }
+
+      if (result.paymentId.trim().isEmpty) {
+        missingFields.add(
+          'paymentId',
+        );
+      }
+
+      if (result.qrCode.trim().isEmpty) {
+        missingFields.add(
+          'qrCode',
+        );
+      }
+
+      if (missingFields.isNotEmpty) {
+        throw PixPaymentException(
+          'Pix recuperado, mas faltou: '
+          '${missingFields.join(', ')}.',
+          code:
+              'INCOMPLETE_PIX_DATA',
+        );
+      }
+
+      // ========================================================
+      // VALOR
+      // ========================================================
+
+      if (result.amount.trim().isEmpty) {
         throw const PixPaymentException(
-          'Os dados do Pix retornaram incompletos.',
+          'O Pix retornou sem o valor do pagamento.',
+          code: 'PIX_AMOUNT_MISSING',
         );
       }
 
       return result;
-    } on PixPaymentException {
+    }
+
+    // ==========================================================
+    // ERROS CONHECIDOS
+    // ==========================================================
+
+    on PixPaymentException {
       rethrow;
-    } on TimeoutException {
+    }
+
+    // ==========================================================
+    // TIMEOUT
+    // ==========================================================
+
+    on TimeoutException {
       throw const PixPaymentException(
         'O servidor demorou muito para responder.',
+        code: 'TIMEOUT',
       );
-    } on http.ClientException {
+    }
+
+    // ==========================================================
+    // CONEXÃO
+    // ==========================================================
+
+    on http.ClientException {
       throw const PixPaymentException(
-        'Não foi possível conectar '
-        'ao servidor de pagamentos.',
+        'Não foi possível conectar ao servidor de pagamentos.',
+        code: 'CONNECTION_ERROR',
       );
-    } catch (e) {
+    }
+
+    // ==========================================================
+    // ERRO DESCONHECIDO
+    // ==========================================================
+
+    catch (e) {
       throw PixPaymentException(
         'Não foi possível gerar o Pix. '
         'Detalhes: $e',
+        code: 'UNKNOWN_PIX_ERROR',
       );
     }
   }
 
-  Map<String, dynamic> _decodeResponse(http.Response response) {
+  // ============================================================
+  // DECODIFICAR JSON
+  // ============================================================
+
+  Map<String, dynamic> _decodeResponse(
+    http.Response response,
+  ) {
     if (response.bodyBytes.isEmpty) {
       return <String, dynamic>{};
     }
 
     try {
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded =
+          jsonDecode(
+        utf8.decode(
+          response.bodyBytes,
+        ),
+      );
 
       if (decoded is Map) {
-        return Map<String, dynamic>.from(decoded);
+        return Map<String, dynamic>.from(
+          decoded,
+        );
       }
 
       return <String, dynamic>{};
@@ -125,10 +289,23 @@ class PixPaymentRepository {
     }
   }
 
-  String _readMessage(Map<String, dynamic> data, {required String fallback}) {
-    final message = data['message']?.toString().trim();
+  // ============================================================
+  // MENSAGEM DO BACKEND
+  // ============================================================
 
-    if (message == null || message.isEmpty) {
+  String _readMessage(
+    Map<String, dynamic> data, {
+    required String fallback,
+  }) {
+    final message =
+        data['message']
+            ?.toString()
+            .trim();
+
+    if (
+      message == null ||
+      message.isEmpty
+    ) {
       return fallback;
     }
 

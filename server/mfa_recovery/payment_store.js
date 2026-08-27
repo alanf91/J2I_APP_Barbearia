@@ -12,17 +12,13 @@ function normalizeString(value) {
 
 function normalizeNullableString(value) {
   const normalized = normalizeString(value);
-
   return normalized || null;
 }
 
 function normalizePositiveInteger(value) {
   const number = Number(value);
 
-  if (
-    !Number.isInteger(number) ||
-    number < 1
-  ) {
+  if (!Number.isInteger(number) || number < 1) {
     return null;
   }
 
@@ -54,7 +50,7 @@ function normalizeStringArray(value) {
 }
 
 // ============================================================
-// ID SEGURO DO DOCUMENTO
+// ID DO DOCUMENTO
 // ============================================================
 
 function createPaymentDocumentId(
@@ -89,17 +85,6 @@ function createPaymentDocumentId(
 
 // ============================================================
 // LOCALIZAR PAGAMENTOS DO AGENDAMENTO
-// ============================================================
-//
-// Este helper será usado pelo server.js no próximo ajuste.
-//
-// Objetivo:
-//
-// appointment
-//     ↓
-// já possui pagamento relevante?
-//     ↓
-// SIM → não criar uma nova cobrança desnecessariamente
 // ============================================================
 
 async function findPaymentsForAppointment({
@@ -136,18 +121,13 @@ async function findPaymentsForAppointment({
         '==',
         normalizedAppointmentId,
       )
-      .limit(
-        safeLimit,
-      )
+      .limit(safeLimit)
       .get();
 
   return snapshot.docs.map(
     (document) => ({
-      id:
-        document.id,
-
-      data:
-        document.data(),
+      id: document.id,
+      data: document.data(),
     }),
   );
 }
@@ -162,9 +142,7 @@ async function registerPayment({
   appointmentId,
   userId,
 
-  provider =
-    'mercado_pago',
-
+  provider = 'mercado_pago',
   method,
 
   orderId,
@@ -181,42 +159,44 @@ async function registerPayment({
 
   testMode,
 
-  paymentMethodId =
-    null,
+  paymentMethodId = null,
+  paymentMethodType = null,
+  installments = null,
 
-  paymentMethodType =
-    null,
+  // ==========================================================
+  // DADOS DO PIX
+  // ==========================================================
+  //
+  // Esses dados são salvos na PRIMEIRA criação do Pix.
+  //
+  // Depois, caso o cliente saia da tela, o sistema poderá
+  // reapresentar o MESMO QR sem criar outra cobrança.
+  // ==========================================================
 
-  installments =
-    null,
+  pixQrCode = null,
+  pixQrCodeBase64 = null,
+  pixTicketUrl = null,
 
   // ==========================================================
   // SEGURANÇA / INTEGRIDADE
   // ==========================================================
 
-  source =
-    'payment_api',
+  source = 'payment_api',
 
-  integrityStatus =
-    'valid',
+  integrityStatus = 'valid',
 
-  integrityIssues =
-    [],
+  integrityIssues = [],
 
-  confirmationEligible =
-    false,
+  confirmationEligible = false,
 
-  confirmationBlockedReason =
-    null,
+  confirmationBlockedReason = null,
 
-  requiresManualReview =
-    false,
+  requiresManualReview = false,
 
-  attachToAppointment =
-    true,
+  attachToAppointment = true,
 }) {
   // ==========================================================
-  // NORMALIZAR CAMPOS
+  // NORMALIZAÇÃO
   // ==========================================================
 
   const normalizedAppointmentId =
@@ -263,6 +243,10 @@ async function registerPayment({
     );
   }
 
+  // ==========================================================
+  // VALORES
+  // ==========================================================
+
   const normalizedAmountCents =
     normalizeInteger(
       amountCents,
@@ -283,6 +267,10 @@ async function registerPayment({
       'INVALID_PAYMENT_AMOUNT',
     );
   }
+
+  // ==========================================================
+  // INTEGRIDADE
+  // ==========================================================
 
   const normalizedIntegrityStatus =
     normalizeString(
@@ -305,7 +293,28 @@ async function registerPayment({
     ) || 'payment_api';
 
   // ==========================================================
-  // REFERÊNCIAS
+  // PIX RECEBIDO
+  // ==========================================================
+
+  const requestedPixData = {
+    qrCode:
+      normalizeNullableString(
+        pixQrCode,
+      ),
+
+    qrCodeBase64:
+      normalizeNullableString(
+        pixQrCodeBase64,
+      ),
+
+    ticketUrl:
+      normalizeNullableString(
+        pixTicketUrl,
+      ),
+  };
+
+  // ==========================================================
+  // DOCUMENTOS
   // ==========================================================
 
   const paymentDocumentId =
@@ -329,7 +338,7 @@ async function registerPayment({
       );
 
   // ==========================================================
-  // DADOS DO PAGAMENTO
+  // PAYMENT
   // ==========================================================
 
   const paymentData = {
@@ -414,25 +423,11 @@ async function registerPayment({
       requiresManualReview === true,
 
     updatedAt:
-      FieldValue
-        .serverTimestamp(),
+      FieldValue.serverTimestamp(),
   };
 
   // ==========================================================
-  // TRANSAÇÃO FIRESTORE
-  // ==========================================================
-  //
-  // Agora garantimos:
-  //
-  // - appointment existe;
-  // - payment pertence ao usuário correto;
-  // - paymentId não pode mudar de appointment;
-  // - paymentId não pode mudar de Order;
-  // - Webhooks repetidos são idempotentes;
-  // - pagamento inconsistente continua registrado em payments;
-  // - pagamento inconsistente NÃO substitui appointment.payment.
-  //
-  // NÃO altera appointment.status.
+  // TRANSAÇÃO
   // ==========================================================
 
   await db.runTransaction(
@@ -464,17 +459,11 @@ async function registerPayment({
       const appointmentData =
         appointmentSnapshot.data();
 
-      if (
-        !appointmentData
-      ) {
+      if (!appointmentData) {
         throw new Error(
           'APPOINTMENT_DATA_NOT_FOUND',
         );
       }
-
-      // ========================================================
-      // VERIFICAR USUÁRIO
-      // ========================================================
 
       if (
         normalizeString(
@@ -487,69 +476,56 @@ async function registerPayment({
         );
       }
 
+      const existingData =
+        existingPayment.exists
+          ? existingPayment.data() || {}
+          : {};
+
       // ========================================================
-      // PAYMENT JÁ EXISTE
-      // ========================================================
-      //
-      // paymentId é imutável em relação a:
-      //
-      // appointment
-      // user
-      // provider
-      // order
+      // IMUTABILIDADE
       // ========================================================
 
       if (
         existingPayment.exists
       ) {
-        const existingData =
-          existingPayment.data() ||
-          {};
-
         const immutableChecks = [
           [
             'appointmentId',
-
             normalizeString(
               existingData.appointmentId,
             ),
-
             normalizedAppointmentId,
           ],
+
           [
             'userId',
-
             normalizeString(
               existingData.userId,
             ),
-
             normalizedUserId,
           ],
+
           [
             'provider',
-
             normalizeString(
               existingData.provider,
             ),
-
             normalizedProvider,
           ],
+
           [
             'paymentId',
-
             normalizeString(
               existingData.paymentId,
             ),
-
             normalizedPaymentId,
           ],
+
           [
             'orderId',
-
             normalizeString(
               existingData.orderId,
             ),
-
             normalizedOrderId,
           ],
         ];
@@ -559,8 +535,7 @@ async function registerPayment({
             field,
             oldValue,
             newValue,
-          ]
-          of immutableChecks
+          ] of immutableChecks
         ) {
           if (
             oldValue &&
@@ -582,129 +557,194 @@ async function registerPayment({
         }
       } else {
         paymentData.createdAt =
-          FieldValue
-            .serverTimestamp();
+          FieldValue.serverTimestamp();
       }
 
       // ========================================================
-      // SALVAR PAYMENT
+      // PRESERVAR PIX
+      // ========================================================
+      //
+      // Muito importante:
+      //
+      // O Webhook pode atualizar o pagamento posteriormente sem
+      // trazer novamente qrCode.
+      //
+      // Portanto:
+      //
+      // NOVO QR recebido
+      //     ↓
+      // usa novo
+      //
+      // Webhook sem QR
+      //     ↓
+      // mantém QR que já estava salvo
+      //
+      // ========================================================
+
+      const existingPix =
+        existingData.pix &&
+        typeof existingData.pix ===
+          'object'
+          ? existingData.pix
+          : {};
+
+      const effectivePix = {
+        qrCode:
+          requestedPixData.qrCode ||
+          normalizeNullableString(
+            existingPix.qrCode,
+          ),
+
+        qrCodeBase64:
+          requestedPixData.qrCodeBase64 ||
+          normalizeNullableString(
+            existingPix.qrCodeBase64,
+          ),
+
+        ticketUrl:
+          requestedPixData.ticketUrl ||
+          normalizeNullableString(
+            existingPix.ticketUrl,
+          ),
+      };
+
+      const hasEffectivePixData =
+        Boolean(
+          effectivePix.qrCode ||
+          effectivePix.qrCodeBase64 ||
+          effectivePix.ticketUrl,
+        );
+
+      if (
+        normalizedMethod ===
+          'pix' &&
+        hasEffectivePixData
+      ) {
+        paymentData.pix =
+          effectivePix;
+      }
+
+      // ========================================================
+      // GRAVAR PAYMENT
       // ========================================================
 
       transaction.set(
         paymentReference,
         paymentData,
         {
-          merge:
-            true,
+          merge: true,
         },
       );
 
       // ========================================================
-      // ASSOCIAR AO APPOINTMENT
-      // ========================================================
-      //
-      // Se o Webhook detectou problema sério, como:
-      //
-      // valor diferente
-      // external_reference incorreta
-      // outro appointment
-      //
-      // o pagamento permanece em /payments para auditoria,
-      // mas não substitui appointment.payment.
+      // APPOINTMENT.PAYMENT
       // ========================================================
 
       if (
         attachToAppointment ===
         true
       ) {
+        const appointmentPaymentData = {
+          recordId:
+            paymentDocumentId,
+
+          provider:
+            normalizedProvider,
+
+          method:
+            normalizedMethod,
+
+          orderId:
+            normalizedOrderId,
+
+          paymentId:
+            normalizedPaymentId,
+
+          status:
+            normalizeString(
+              status,
+            ),
+
+          statusDetail:
+            normalizeString(
+              statusDetail,
+            ),
+
+          amount:
+            normalizeString(
+              amount,
+            ),
+
+          amountCents:
+            normalizedAmountCents,
+
+          realAppointmentAmount:
+            normalizeString(
+              realAppointmentAmount,
+            ),
+
+          realAppointmentAmountCents:
+            normalizedRealAmountCents,
+
+          paymentMethodId:
+            normalizeNullableString(
+              paymentMethodId,
+            ),
+
+          paymentMethodType:
+            normalizeNullableString(
+              paymentMethodType,
+            ),
+
+          installments:
+            normalizePositiveInteger(
+              installments,
+            ),
+
+          testMode:
+            testMode === true,
+
+          integrityStatus:
+            normalizedIntegrityStatus,
+
+          integrityIssues:
+            normalizedIntegrityIssues,
+
+          confirmationEligible:
+            confirmationEligible === true,
+
+          confirmationBlockedReason:
+            normalizedBlockedReason,
+
+          requiresManualReview:
+            requiresManualReview === true,
+        };
+
+        // ======================================================
+        // PIX TAMBÉM NO APPOINTMENT
+        // ======================================================
+
+        if (
+          normalizedMethod ===
+            'pix' &&
+          hasEffectivePixData
+        ) {
+          appointmentPaymentData.pix =
+            effectivePix;
+        }
+
         transaction.set(
           appointmentReference,
           {
-            payment: {
-              recordId:
-                paymentDocumentId,
-
-              provider:
-                normalizedProvider,
-
-              method:
-                normalizedMethod,
-
-              orderId:
-                normalizedOrderId,
-
-              paymentId:
-                normalizedPaymentId,
-
-              status:
-                normalizeString(
-                  status,
-                ),
-
-              statusDetail:
-                normalizeString(
-                  statusDetail,
-                ),
-
-              amount:
-                normalizeString(
-                  amount,
-                ),
-
-              amountCents:
-                normalizedAmountCents,
-
-              realAppointmentAmount:
-                normalizeString(
-                  realAppointmentAmount,
-                ),
-
-              realAppointmentAmountCents:
-                normalizedRealAmountCents,
-
-              paymentMethodId:
-                normalizeNullableString(
-                  paymentMethodId,
-                ),
-
-              paymentMethodType:
-                normalizeNullableString(
-                  paymentMethodType,
-                ),
-
-              installments:
-                normalizePositiveInteger(
-                  installments,
-                ),
-
-              testMode:
-                testMode === true,
-
-              integrityStatus:
-                normalizedIntegrityStatus,
-
-              integrityIssues:
-                normalizedIntegrityIssues,
-
-              confirmationEligible:
-                confirmationEligible ===
-                true,
-
-              confirmationBlockedReason:
-                normalizedBlockedReason,
-
-              requiresManualReview:
-                requiresManualReview ===
-                true,
-            },
+            payment:
+              appointmentPaymentData,
 
             paymentUpdatedAt:
               FieldValue
                 .serverTimestamp(),
           },
           {
-            merge:
-              true,
+            merge: true,
           },
         );
       }
@@ -717,7 +757,7 @@ async function registerPayment({
 }
 
 // ============================================================
-// EXPORT
+// EXPORTS
 // ============================================================
 
 module.exports = {

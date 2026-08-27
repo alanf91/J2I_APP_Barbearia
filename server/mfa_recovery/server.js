@@ -30,7 +30,7 @@ const {
 } = require('firebase-admin/firestore');
 
 // ============================================================
-// MERCADO PAGO
+// CONFIGURAÇÃO
 // ============================================================
 
 const MERCADO_PAGO_ACCESS_TOKEN =
@@ -49,7 +49,39 @@ const MERCADO_PAGO_TEST_MODE =
 const MERCADO_PAGO_ORDERS_URL =
   'https://api.mercadopago.com/v1/orders';
 
-if (!MERCADO_PAGO_ACCESS_TOKEN) {
+const FIREBASE_PROJECT_ID =
+  String(
+    process.env.FIREBASE_PROJECT_ID || '',
+  ).trim();
+
+const PORT =
+  Number(
+    process.env.PORT || 8080,
+  );
+
+const RECOVERY_EXPIRATION_MINUTES =
+  15;
+
+const RECOVERY_EXPIRATION_MS =
+  RECOVERY_EXPIRATION_MINUTES *
+  60 *
+  1000;
+
+const PAYMENT_CREATION_LOCK_MS =
+  90 *
+  1000;
+
+const RETRYABLE_PAYMENT_STATUSES =
+  new Set([
+    'failed',
+    'canceled',
+    'cancelled',
+    'expired',
+  ]);
+
+if (
+  !MERCADO_PAGO_ACCESS_TOKEN
+) {
   console.error(
     'ERRO: MERCADO_PAGO_ACCESS_TOKEN não configurado.',
   );
@@ -57,16 +89,9 @@ if (!MERCADO_PAGO_ACCESS_TOKEN) {
   process.exit(1);
 }
 
-// ============================================================
-// FIREBASE ADMIN
-// ============================================================
-
-const FIREBASE_PROJECT_ID =
-  String(
-    process.env.FIREBASE_PROJECT_ID || '',
-  ).trim();
-
-if (!FIREBASE_PROJECT_ID) {
+if (
+  !FIREBASE_PROJECT_ID
+) {
   console.error(
     'ERRO: FIREBASE_PROJECT_ID não configurado.',
   );
@@ -74,32 +99,30 @@ if (!FIREBASE_PROJECT_ID) {
   process.exit(1);
 }
 
+// ============================================================
+// FIREBASE
+// ============================================================
+
 initializeApp({
-  credential: applicationDefault(),
+  credential:
+    applicationDefault(),
 
   projectId:
     FIREBASE_PROJECT_ID,
 });
 
-const auth = getAuth();
-const db = getFirestore();
+const auth =
+  getAuth();
+
+const db =
+  getFirestore();
 
 // ============================================================
 // EXPRESS
 // ============================================================
 
-const app = express();
-
-const PORT = Number(
-  process.env.PORT || 8080,
-);
-
-const RECOVERY_EXPIRATION_MINUTES = 15;
-
-const RECOVERY_EXPIRATION_MS =
-  RECOVERY_EXPIRATION_MINUTES *
-  60 *
-  1000;
+const app =
+  express();
 
 app.set(
   'trust proxy',
@@ -116,16 +139,22 @@ app.use(
   }),
 );
 
-// ============================================================
-// RATE LIMIT
-// ============================================================
+const recoveryLimiter =
+  rateLimit({
+    windowMs:
+      15 *
+      60 *
+      1000,
 
-const recoveryLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+    limit:
+      20,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+  });
 
 app.use(
   '/v1/mfa-recovery',
@@ -136,13 +165,19 @@ app.use(
 // UTILITÁRIOS
 // ============================================================
 
-function normalizeEmail(value) {
-  return String(value || '')
+function normalizeEmail(
+  value,
+) {
+  return String(
+    value || '',
+  )
     .trim()
     .toLowerCase();
 }
 
-function isValidEmail(email) {
+function isValidEmail(
+  email,
+) {
   return (
     email.length >= 5 &&
     email.length <= 254 &&
@@ -151,76 +186,30 @@ function isValidEmail(email) {
   );
 }
 
-function createRecoveryToken() {
-  return crypto
-    .randomBytes(32)
-    .toString('base64url');
-}
-
-function hashToken(token) {
-  return crypto
-    .createHash('sha256')
-    .update(token)
-    .digest('hex');
-}
-
-function safeCompareHashes(
-  first,
-  second,
+function normalizeBrazilPhone(
+  value,
 ) {
-  try {
-    const a = Buffer.from(
-      first,
-      'hex',
-    );
-
-    const b = Buffer.from(
-      second,
-      'hex',
-    );
-
-    if (a.length !== b.length) {
-      return false;
-    }
-
-    return crypto.timingSafeEqual(
-      a,
-      b,
-    );
-  } catch (_) {
-    return false;
-  }
-}
-
-function parseFirebaseTime(value) {
-  if (!value) {
-    return 0;
-  }
-
-  const milliseconds =
-    Date.parse(value);
-
-  if (!Number.isFinite(milliseconds)) {
-    return 0;
-  }
-
-  return milliseconds;
-}
-
-function normalizeBrazilPhone(value) {
   let digits =
-    String(value || '')
-      .replace(/\D/g, '');
+    String(
+      value || '',
+    ).replace(
+      /\D/g,
+      '',
+    );
 
   if (
-    digits.startsWith('55') &&
+    digits.startsWith(
+      '55',
+    ) &&
     (
       digits.length === 12 ||
       digits.length === 13
     )
   ) {
     digits =
-      digits.substring(2);
+      digits.substring(
+        2,
+      );
   }
 
   if (
@@ -233,26 +222,150 @@ function normalizeBrazilPhone(value) {
   return digits;
 }
 
-function getBearerToken(request) {
+function createRecoveryToken() {
+  return crypto
+    .randomBytes(
+      32,
+    )
+    .toString(
+      'base64url',
+    );
+}
+
+function hashToken(
+  token,
+) {
+  return crypto
+    .createHash(
+      'sha256',
+    )
+    .update(
+      token,
+    )
+    .digest(
+      'hex',
+    );
+}
+
+function safeCompareHashes(
+  first,
+  second,
+) {
+  try {
+    const a =
+      Buffer.from(
+        first,
+        'hex',
+      );
+
+    const b =
+      Buffer.from(
+        second,
+        'hex',
+      );
+
+    if (
+      a.length !==
+      b.length
+    ) {
+      return false;
+    }
+
+    return crypto
+      .timingSafeEqual(
+        a,
+        b,
+      );
+  } catch (_) {
+    return false;
+  }
+}
+
+function parseFirebaseTime(
+  value,
+) {
+  if (!value) {
+    return 0;
+  }
+
+  const milliseconds =
+    Date.parse(
+      value,
+    );
+
+  return Number.isFinite(
+    milliseconds,
+  )
+    ? milliseconds
+    : 0;
+}
+
+function getBearerToken(
+  request,
+) {
   const authorization =
     String(
-      request.headers.authorization || '',
+      request
+        .headers
+        .authorization ||
+      '',
     ).trim();
 
   if (
-    !authorization.startsWith(
-      'Bearer ',
-    )
+    !authorization
+      .startsWith(
+        'Bearer ',
+      )
   ) {
     return null;
   }
 
-  const idToken =
+  return (
     authorization
       .substring(7)
-      .trim();
+      .trim() ||
+    null
+  );
+}
 
-  return idToken || null;
+function normalizePaymentStatus(
+  value,
+) {
+  return String(
+    value || '',
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function createIdempotencyKey(
+  value,
+) {
+  return crypto
+    .createHash(
+      'sha256',
+    )
+    .update(
+      value,
+    )
+    .digest(
+      'hex',
+    );
+}
+
+function getPayerEmail(
+  decodedToken,
+) {
+  if (
+    MERCADO_PAGO_TEST_MODE
+  ) {
+    return 'test_user_br@testuser.com';
+  }
+
+  return normalizeEmail(
+    decodedToken
+      ?.email,
+  );
 }
 
 function getAppointmentAmount(
@@ -260,11 +373,14 @@ function getAppointmentAmount(
 ) {
   const priceCents =
     Number(
-      appointment?.priceCents,
+      appointment
+        ?.priceCents,
     );
 
   if (
-    !Number.isInteger(priceCents) ||
+    !Number.isInteger(
+      priceCents,
+    ) ||
     priceCents <= 0
   ) {
     return null;
@@ -272,18 +388,19 @@ function getAppointmentAmount(
 
   const realAmount =
     (
-      priceCents / 100
-    ).toFixed(2);
-
-  // O Mercado Pago deve cobrar exatamente o valor do serviço
-  // salvo no agendamento, inclusive no ambiente de teste.
-  const mercadoPagoAmount =
-    realAmount;
+      priceCents /
+      100
+    ).toFixed(
+      2,
+    );
 
   return {
     priceCents,
+
     realAmount,
-    mercadoPagoAmount,
+
+    mercadoPagoAmount:
+      realAmount,
   };
 }
 
@@ -295,16 +412,104 @@ function getAppointmentExpirationMs(
       ?.paymentExpiresAt
       ?.toMillis?.();
 
-  if (
-    !Number.isFinite(
-      expirationMs,
-    )
-  ) {
-    return null;
+  return Number.isFinite(
+    expirationMs,
+  )
+    ? expirationMs
+    : null;
+}
+
+async function readMercadoPagoResponse(
+  response,
+) {
+  const raw =
+    await response.text();
+
+  if (!raw) {
+    return {};
   }
 
-  return expirationMs;
+  try {
+    return JSON.parse(
+      raw,
+    );
+  } catch (_) {
+    return {};
+  }
 }
+
+function sendKnownError(
+  response,
+  result,
+) {
+  return response
+    .status(
+      result.statusCode,
+    )
+    .json({
+      ok:
+        false,
+
+      code:
+        result.code,
+
+      message:
+        result.message,
+    });
+}
+
+function handleAuthError(
+  error,
+  response,
+) {
+  if (
+    error?.code ===
+    'auth/id-token-revoked'
+  ) {
+    response
+      .status(401)
+      .json({
+        ok:
+          false,
+
+        code:
+          'TOKEN_REVOKED',
+
+        message:
+          'Sua sessão expirou. Entre novamente.',
+      });
+
+    return true;
+  }
+
+  if (
+    error?.code ===
+      'auth/id-token-expired' ||
+    error?.code ===
+      'auth/argument-error'
+  ) {
+    response
+      .status(401)
+      .json({
+        ok:
+          false,
+
+        code:
+          'UNAUTHORIZED',
+
+        message:
+          'Sua sessão não é mais válida. Entre novamente.',
+      });
+
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================
+// VALIDAR APPOINTMENT
+// ============================================================
 
 async function validateAppointmentForPayment({
   appointmentReference,
@@ -312,42 +517,82 @@ async function validateAppointmentForPayment({
 }) {
   const status =
     String(
-      appointment?.status || '',
+      appointment
+        ?.status ||
+      '',
     ).trim();
 
-  if (status === 'cancelled') {
+  if (
+    status ===
+    'cancelled'
+  ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'APPOINTMENT_CANCELLED',
-      message: 'Este agendamento foi cancelado.',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'APPOINTMENT_CANCELLED',
+
+      message:
+        'Este agendamento foi cancelado.',
     };
   }
 
-  if (status === 'expired') {
+  if (
+    status ===
+    'expired'
+  ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'APPOINTMENT_EXPIRED',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'APPOINTMENT_EXPIRED',
+
       message:
         'A reserva deste horário expirou. Escolha o horário novamente.',
     };
   }
 
-  if (status === 'confirmed') {
+  if (
+    status ===
+    'confirmed'
+  ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'APPOINTMENT_ALREADY_CONFIRMED',
-      message: 'Este agendamento já está confirmado.',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'APPOINTMENT_ALREADY_CONFIRMED',
+
+      message:
+        'Este agendamento já está confirmado.',
     };
   }
 
-  if (status !== 'pending_payment') {
+  if (
+    status !==
+    'pending_payment'
+  ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'APPOINTMENT_NOT_PAYABLE',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'APPOINTMENT_NOT_PAYABLE',
+
       message:
         'Este agendamento não está disponível para pagamento.',
     };
@@ -358,77 +603,119 @@ async function validateAppointmentForPayment({
       appointment,
     );
 
-  if (expirationMs == null) {
+  if (
+    expirationMs ==
+    null
+  ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'INVALID_PAYMENT_RESERVATION',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'INVALID_PAYMENT_RESERVATION',
+
       message:
         'A reserva do horário não possui uma validade correta.',
     };
   }
 
-  const nowMs = Date.now();
+  const nowMs =
+    Date.now();
 
-  if (expirationMs <= nowMs) {
+  if (
+    expirationMs <=
+    nowMs
+  ) {
     try {
-      await db.runTransaction(
-        async (transaction) => {
-          const freshSnapshot =
-            await transaction.get(
-              appointmentReference,
-            );
+      await db
+        .runTransaction(
+          async (
+            transaction,
+          ) => {
+            const freshSnapshot =
+              await transaction
+                .get(
+                  appointmentReference,
+                );
 
-          if (!freshSnapshot.exists) {
-            return;
-          }
+            if (
+              !freshSnapshot
+                .exists
+            ) {
+              return;
+            }
 
-          const freshAppointment =
-            freshSnapshot.data();
+            const freshAppointment =
+              freshSnapshot
+                .data() ||
+              {};
 
-          const freshStatus =
-            String(
-              freshAppointment?.status || '',
-            ).trim();
+            const freshStatus =
+              String(
+                freshAppointment
+                  .status ||
+                '',
+              ).trim();
 
-          const freshExpirationMs =
-            getAppointmentExpirationMs(
-              freshAppointment,
-            );
+            const freshExpirationMs =
+              getAppointmentExpirationMs(
+                freshAppointment,
+              );
 
-          if (
-            freshStatus === 'pending_payment' &&
-            freshExpirationMs != null &&
-            freshExpirationMs <= Date.now()
-          ) {
-            transaction.update(
-              appointmentReference,
-              {
-                status: 'expired',
-                expiredAt:
-                  FieldValue.serverTimestamp(),
-              },
-            );
-          }
-        },
-      );
-    } catch (error) {
+            if (
+              freshStatus ===
+                'pending_payment' &&
+              freshExpirationMs !=
+                null &&
+              freshExpirationMs <=
+                Date.now()
+            ) {
+              transaction
+                .update(
+                  appointmentReference,
+                  {
+                    status:
+                      'expired',
+
+                    expiredAt:
+                      FieldValue
+                        .serverTimestamp(),
+                  },
+                );
+            }
+          },
+        );
+    } catch (
+      error
+    ) {
       console.error(
         'MARK APPOINTMENT EXPIRED ERROR:',
         {
           appointmentId:
-            appointmentReference.id,
+            appointmentReference
+              .id,
+
           message:
-            error?.message ||
+            error
+              ?.message ||
             'Unknown error',
         },
       );
     }
 
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'APPOINTMENT_EXPIRED',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'APPOINTMENT_EXPIRED',
+
       message:
         'A reserva de 2 minutos expirou. Escolha o horário novamente.',
     };
@@ -440,61 +727,141 @@ async function validateAppointmentForPayment({
       ?.toMillis?.();
 
   if (
-    Number.isFinite(startAtMs) &&
-    startAtMs <= nowMs
+    Number.isFinite(
+      startAtMs,
+    ) &&
+    startAtMs <=
+      nowMs
   ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'APPOINTMENT_ALREADY_STARTED',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'APPOINTMENT_ALREADY_STARTED',
+
       message:
         'O horário deste atendimento já começou.',
     };
   }
 
   return {
-    ok: true,
+    ok:
+      true,
+  };
+}
+
+async function loadOwnedAppointment({
+  appointmentId,
+  uid,
+}) {
+  const reference =
+    db
+      .collection(
+        'appointments',
+      )
+      .doc(
+        appointmentId,
+      );
+
+  const snapshot =
+    await reference
+      .get();
+
+  if (
+    !snapshot
+      .exists
+  ) {
+    return {
+      ok:
+        false,
+
+      statusCode:
+        404,
+
+      code:
+        'APPOINTMENT_NOT_FOUND',
+
+      message:
+        'Agendamento não encontrado.',
+    };
+  }
+
+  const appointment =
+    snapshot.data();
+
+  if (
+    !appointment
+  ) {
+    return {
+      ok:
+        false,
+
+      statusCode:
+        404,
+
+      code:
+        'APPOINTMENT_NOT_FOUND',
+
+      message:
+        'Dados do agendamento não encontrados.',
+    };
+  }
+
+  if (
+    appointment
+      .userId !==
+    uid
+  ) {
+    return {
+      ok:
+        false,
+
+      statusCode:
+        403,
+
+      code:
+        'FORBIDDEN',
+
+      message:
+        'Você não possui acesso a este agendamento.',
+    };
+  }
+
+  return {
+    ok:
+      true,
+
+    reference,
+
+    appointment,
   };
 }
 
 // ============================================================
-// BLOQUEIO DE COBRANÇA DUPLICADA
+// DUPLICIDADE
 // ============================================================
-
-const PAYMENT_CREATION_LOCK_MS =
-  90 * 1000;
-
-const RETRYABLE_PAYMENT_STATUSES =
-  new Set([
-    'failed',
-    'canceled',
-    'cancelled',
-    'expired',
-  ]);
-
-function normalizePaymentStatus(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase();
-}
 
 function paymentRecordBlocksNewCharge(
   paymentData,
 ) {
   const status =
     normalizePaymentStatus(
-      paymentData?.status,
+      paymentData
+        ?.status,
     );
 
-  // Sem status confiável, bloqueamos por segurança.
   if (!status) {
     return true;
   }
 
-  // Somente estados terminais que não concluíram cobrança
-  // permitem uma nova tentativa.
   return !RETRYABLE_PAYMENT_STATUSES
-    .has(status);
+    .has(
+      status,
+    );
 }
 
 async function getBlockingPaymentForAppointment(
@@ -502,29 +869,35 @@ async function getBlockingPaymentForAppointment(
 ) {
   const payments =
     await findPaymentsForAppointment({
-      db:
-        db,
+      db,
 
-      appointmentId:
-        appointmentId,
+      appointmentId,
 
       limit:
         20,
     });
 
-  return payments.find(
-    (payment) =>
-      paymentRecordBlocksNewCharge(
-        payment?.data,
-      ),
-  ) || null;
+  return (
+    payments.find(
+      (
+        payment,
+      ) =>
+        paymentRecordBlocksNewCharge(
+          payment
+            ?.data,
+        ),
+    ) ||
+    null
+  );
 }
 
 function getBlockingPaymentResponse(
   blockingPayment,
 ) {
   const data =
-    blockingPayment?.data || {};
+    blockingPayment
+      ?.data ||
+    {};
 
   const status =
     normalizePaymentStatus(
@@ -533,31 +906,49 @@ function getBlockingPaymentResponse(
 
   const statusDetail =
     normalizePaymentStatus(
-      data.statusDetail,
+      data
+        .statusDetail,
     );
 
-  const approved =
-    status === 'processed' &&
-    statusDetail === 'accredited';
-
-  if (approved) {
+  if (
+    status ===
+      'processed' &&
+    statusDetail ===
+      'accredited'
+  ) {
     return {
-      ok: false,
-      statusCode: 409,
-      code: 'PAYMENT_ALREADY_APPROVED',
+      ok:
+        false,
+
+      statusCode:
+        409,
+
+      code:
+        'PAYMENT_ALREADY_APPROVED',
+
       message:
         'Este agendamento já possui um pagamento aprovado.',
     };
   }
 
   return {
-    ok: false,
-    statusCode: 409,
-    code: 'PAYMENT_ALREADY_IN_PROGRESS',
+    ok:
+      false,
+
+    statusCode:
+      409,
+
+    code:
+      'PAYMENT_ALREADY_IN_PROGRESS',
+
     message:
       'Este agendamento já possui um pagamento em andamento.',
   };
 }
+
+// ============================================================
+// LOCK
+// ============================================================
 
 async function acquirePaymentCreationLock({
   appointmentReference,
@@ -565,130 +956,187 @@ async function acquirePaymentCreationLock({
   method,
 }) {
   const lockId =
-    crypto.randomUUID();
+    crypto
+      .randomUUID();
 
-  return db.runTransaction(
-    async (transaction) => {
-      const snapshot =
-        await transaction.get(
+  return db
+    .runTransaction(
+      async (
+        transaction,
+      ) => {
+        const snapshot =
+          await transaction
+            .get(
+              appointmentReference,
+            );
+
+        if (
+          !snapshot
+            .exists
+        ) {
+          return {
+            ok:
+              false,
+
+            statusCode:
+              404,
+
+            code:
+              'APPOINTMENT_NOT_FOUND',
+
+            message:
+              'Agendamento não encontrado.',
+          };
+        }
+
+        const appointment =
+          snapshot
+            .data() ||
+          {};
+
+        if (
+          appointment
+            .userId !==
+          uid
+        ) {
+          return {
+            ok:
+              false,
+
+            statusCode:
+              403,
+
+            code:
+              'FORBIDDEN',
+
+            message:
+              'Você não possui acesso a este agendamento.',
+          };
+        }
+
+        if (
+          String(
+            appointment
+              .status ||
+            '',
+          ).trim() !==
+          'pending_payment'
+        ) {
+          return {
+            ok:
+              false,
+
+            statusCode:
+              409,
+
+            code:
+              'APPOINTMENT_NOT_PAYABLE',
+
+            message:
+              'Este agendamento não está disponível para pagamento.',
+          };
+        }
+
+        const expirationMs =
+          getAppointmentExpirationMs(
+            appointment,
+          );
+
+        const nowMs =
+          Date.now();
+
+        if (
+          expirationMs ==
+            null ||
+          expirationMs <=
+            nowMs
+        ) {
+          return {
+            ok:
+              false,
+
+            statusCode:
+              409,
+
+            code:
+              'APPOINTMENT_EXPIRED',
+
+            message:
+              'A reserva de 2 minutos expirou. Escolha o horário novamente.',
+          };
+        }
+
+        const currentLock =
+          appointment
+            .paymentCreationLock;
+
+        const currentLockExpiresAtMs =
+          currentLock
+            ?.expiresAt
+            ?.toMillis?.() ||
+          0;
+
+        if (
+          currentLock
+            ?.id &&
+          currentLockExpiresAtMs >
+            nowMs
+        ) {
+          return {
+            ok:
+              false,
+
+            statusCode:
+              409,
+
+            code:
+              'PAYMENT_CREATION_IN_PROGRESS',
+
+            message:
+              'Já existe uma tentativa de pagamento sendo criada para este agendamento.',
+          };
+        }
+
+        transaction.set(
           appointmentReference,
-        );
+          {
+            paymentCreationLock:
+              {
+                id:
+                  lockId,
 
-      if (!snapshot.exists) {
-        return {
-          ok: false,
-          statusCode: 404,
-          code: 'APPOINTMENT_NOT_FOUND',
-          message: 'Agendamento não encontrado.',
-        };
-      }
+                method:
+                  String(
+                    method ||
+                    '',
+                  ).trim(),
 
-      const appointment =
-        snapshot.data() || {};
+                createdAt:
+                  FieldValue
+                    .serverTimestamp(),
 
-      if (appointment.userId !== uid) {
-        return {
-          ok: false,
-          statusCode: 403,
-          code: 'FORBIDDEN',
-          message:
-            'Você não possui acesso a este agendamento.',
-        };
-      }
-
-      const status =
-        String(
-          appointment.status || '',
-        ).trim();
-
-      if (status !== 'pending_payment') {
-        return {
-          ok: false,
-          statusCode: 409,
-          code: 'APPOINTMENT_NOT_PAYABLE',
-          message:
-            'Este agendamento não está disponível para pagamento.',
-        };
-      }
-
-      const expirationMs =
-        getAppointmentExpirationMs(
-          appointment,
-        );
-
-      const nowMs =
-        Date.now();
-
-      if (
-        expirationMs == null ||
-        expirationMs <= nowMs
-      ) {
-        return {
-          ok: false,
-          statusCode: 409,
-          code: 'APPOINTMENT_EXPIRED',
-          message:
-            'A reserva de 2 minutos expirou. Escolha o horário novamente.',
-        };
-      }
-
-      const currentLock =
-        appointment
-          .paymentCreationLock;
-
-      const currentLockExpiresAtMs =
-        currentLock
-          ?.expiresAt
-          ?.toMillis?.() ||
-        0;
-
-      if (
-        currentLock?.id &&
-        currentLockExpiresAtMs > nowMs
-      ) {
-        return {
-          ok: false,
-          statusCode: 409,
-          code: 'PAYMENT_CREATION_IN_PROGRESS',
-          message:
-            'Já existe uma tentativa de pagamento sendo criada para este agendamento.',
-        };
-      }
-
-      transaction.set(
-        appointmentReference,
-        {
-          paymentCreationLock: {
-            id:
-              lockId,
-
-            method:
-              String(method || '')
-                .trim(),
-
-            createdAt:
-              FieldValue
-                .serverTimestamp(),
-
-            expiresAt:
-              Timestamp.fromMillis(
-                nowMs +
-                PAYMENT_CREATION_LOCK_MS,
-              ),
+                expiresAt:
+                  Timestamp
+                    .fromMillis(
+                      nowMs +
+                      PAYMENT_CREATION_LOCK_MS,
+                    ),
+              },
           },
-        },
-        {
-          merge: true,
-        },
-      );
+          {
+            merge:
+              true,
+          },
+        );
 
-      return {
-        ok: true,
-        lockId:
+        return {
+          ok:
+            true,
+
           lockId,
-      };
-    },
-  );
+        };
+      },
+    );
 }
 
 async function releasePaymentCreationLock({
@@ -703,112 +1151,660 @@ async function releasePaymentCreationLock({
   }
 
   try {
-    await db.runTransaction(
-      async (transaction) => {
-        const snapshot =
-          await transaction.get(
+    await db
+      .runTransaction(
+        async (
+          transaction,
+        ) => {
+          const snapshot =
+            await transaction
+              .get(
+                appointmentReference,
+              );
+
+          if (
+            !snapshot
+              .exists
+          ) {
+            return;
+          }
+
+          const appointment =
+            snapshot
+              .data() ||
+            {};
+
+          if (
+            appointment
+              .paymentCreationLock
+              ?.id !==
+            lockId
+          ) {
+            return;
+          }
+
+          transaction.update(
             appointmentReference,
+            {
+              paymentCreationLock:
+                FieldValue
+                  .delete(),
+            },
           );
-
-        if (!snapshot.exists) {
-          return;
-        }
-
-        const appointment =
-          snapshot.data() || {};
-
-        if (
-          appointment
-            .paymentCreationLock
-            ?.id !== lockId
-        ) {
-          return;
-        }
-
-        transaction.update(
-          appointmentReference,
-          {
-            paymentCreationLock:
-              FieldValue.delete(),
-          },
-        );
-      },
-    );
-  } catch (error) {
+        },
+      );
+  } catch (
+    error
+  ) {
     console.error(
       'RELEASE PAYMENT LOCK ERROR:',
       {
         appointmentId:
-          appointmentReference.id,
+          appointmentReference
+            .id,
 
         message:
-          error?.message ||
+          error
+            ?.message ||
           'Unknown error',
       },
     );
   }
 }
 
-function getPayerEmail(
-  decodedToken,
+// ============================================================
+// CONSULTAR ORDER MERCADO PAGO
+// ============================================================
+
+async function getMercadoPagoOrder(
+  orderId,
 ) {
-  if (MERCADO_PAGO_TEST_MODE) {
-    return 'test_user_br@testuser.com';
-  }
+  const normalizedOrderId =
+    String(
+      orderId ||
+      '',
+    ).trim();
 
-  return normalizeEmail(
-    decodedToken?.email,
-  );
-}
-
-function createIdempotencyKey(
-  value,
-) {
-  return crypto
-    .createHash('sha256')
-    .update(value)
-    .digest('hex');
-}
-
-async function readMercadoPagoResponse(
-  mercadoPagoResponse,
-) {
-  const rawResponse =
-    await mercadoPagoResponse.text();
-
-  try {
-    return JSON.parse(
-      rawResponse,
+  if (
+    !normalizedOrderId
+  ) {
+    throw new Error(
+      'MERCADO_PAGO_ORDER_ID_REQUIRED',
     );
-  } catch (_) {
-    return {};
   }
+
+  const response =
+    await fetch(
+      `${MERCADO_PAGO_ORDERS_URL}/${encodeURIComponent(
+        normalizedOrderId,
+      )}`,
+      {
+        method:
+          'GET',
+
+        headers:
+          {
+            Accept:
+              'application/json',
+
+            Authorization:
+              `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+          },
+      },
+    );
+
+  const data =
+    await readMercadoPagoResponse(
+      response,
+    );
+
+  if (
+    !response.ok
+  ) {
+    const error =
+      new Error(
+        'MERCADO_PAGO_ORDER_QUERY_FAILED',
+      );
+
+    error.status =
+      response.status;
+
+    throw error;
+  }
+
+  return data;
 }
 
 // ============================================================
-// HEALTH CHECK
+// PIX SALVO
+// ============================================================
+
+function getStoredPixData(
+  paymentRecord,
+) {
+  const paymentData =
+    paymentRecord
+      ?.data ||
+    {};
+
+  const pix =
+    paymentData.pix &&
+    typeof paymentData.pix ===
+      'object'
+      ? paymentData.pix
+      : {};
+
+  return {
+    qrCode:
+      String(
+        pix.qrCode ||
+        '',
+      ).trim(),
+
+    qrCodeBase64:
+      String(
+        pix.qrCodeBase64 ||
+        '',
+      ).trim(),
+
+    ticketUrl:
+      String(
+        pix.ticketUrl ||
+        '',
+      ).trim(),
+  };
+}
+
+async function updateStoredPaymentStatus({
+  paymentRecord,
+  status,
+  statusDetail,
+}) {
+  if (
+    !paymentRecord
+      ?.id
+  ) {
+    return;
+  }
+
+  await db
+    .collection(
+      'payments',
+    )
+    .doc(
+      paymentRecord.id,
+    )
+    .set(
+      {
+        status:
+          String(
+            status ||
+            '',
+          ).trim(),
+
+        statusDetail:
+          String(
+            statusDetail ||
+            '',
+          ).trim(),
+
+        updatedAt:
+          FieldValue
+            .serverTimestamp(),
+      },
+      {
+        merge:
+          true,
+      },
+    );
+}
+
+// ============================================================
+// REUTILIZAR PIX EXISTENTE
+// ============================================================
+
+async function tryReuseExistingPix({
+  blockingPayment,
+  appointmentId,
+  amounts,
+}) {
+  const stored =
+    blockingPayment
+      ?.data ||
+    {};
+
+  const storedMethod =
+    String(
+      stored.method ||
+      '',
+    )
+      .trim()
+      .toLowerCase();
+
+  if (
+    storedMethod !==
+    'pix'
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        getBlockingPaymentResponse(
+          blockingPayment,
+        ),
+    };
+  }
+
+  const storedPix =
+    getStoredPixData(
+      blockingPayment,
+    );
+
+  // PIX ANTIGO, CRIADO ANTES DESTA ALTERAÇÃO.
+  if (
+    !storedPix.qrCode
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            409,
+
+          code:
+            'PIX_QR_NOT_STORED',
+
+          message:
+            'Este Pix foi criado antes da recuperação automática do QR Code. '
+            +
+            'Crie um novo agendamento para testar esta correção.',
+        },
+    };
+  }
+
+  const orderId =
+    String(
+      stored.orderId ||
+      '',
+    ).trim();
+
+  const storedPaymentId =
+    String(
+      stored.paymentId ||
+      '',
+    ).trim();
+
+  if (
+    !orderId ||
+    !storedPaymentId
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            409,
+
+          code:
+            'PIX_REFERENCE_INCOMPLETE',
+
+          message:
+            'O Pix existente está sem identificação completa.',
+        },
+    };
+  }
+
+  let order;
+
+  try {
+    order =
+      await getMercadoPagoOrder(
+        orderId,
+      );
+  } catch (
+    error
+  ) {
+    console.error(
+      'REUSE PIX ORDER QUERY ERROR:',
+      {
+        appointmentId,
+
+        orderId,
+
+        status:
+          error
+            ?.status ||
+          null,
+
+        message:
+          error
+            ?.message ||
+          'Unknown error',
+      },
+    );
+
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            502,
+
+          code:
+            'PIX_REUSE_CHECK_FAILED',
+
+          message:
+            'Não foi possível consultar o Pix existente agora. '
+            +
+            'Tente novamente em alguns segundos.',
+        },
+    };
+  }
+
+  // ==========================================================
+  // VALIDAR ORDER
+  // ==========================================================
+
+  if (
+    String(
+      order
+        ?.id ||
+      '',
+    ).trim() !==
+    orderId
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            409,
+
+          code:
+            'PIX_ORDER_MISMATCH',
+
+          message:
+            'A cobrança Pix retornada não corresponde ao registro salvo.',
+        },
+    };
+  }
+
+  const expectedExternalReference =
+    `j2i_appointment_${appointmentId}`;
+
+  if (
+    String(
+      order
+        ?.external_reference ||
+      '',
+    ).trim() !==
+    expectedExternalReference
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            409,
+
+          code:
+            'PIX_APPOINTMENT_MISMATCH',
+
+          message:
+            'A cobrança Pix não pertence a este agendamento.',
+        },
+    };
+  }
+
+  // ==========================================================
+  // PAYMENT DA ORDER
+  // ==========================================================
+
+  const payments =
+    Array.isArray(
+      order
+        ?.transactions
+        ?.payments,
+    )
+      ? order
+          .transactions
+          .payments
+      : [];
+
+  const payment =
+    payments.find(
+      (
+        item,
+      ) =>
+        String(
+          item
+            ?.id ||
+          '',
+        ).trim() ===
+        storedPaymentId,
+    ) ||
+    payments[0] ||
+    null;
+
+  if (
+    !payment
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            502,
+
+          code:
+            'PIX_PAYMENT_NOT_FOUND',
+
+          message:
+            'O Mercado Pago não retornou o pagamento Pix da cobrança existente.',
+        },
+    };
+  }
+
+  if (
+    String(
+      payment.id ||
+      '',
+    ).trim() !==
+    storedPaymentId
+  ) {
+    return {
+      action:
+        'block',
+
+      conflict:
+        {
+          ok:
+            false,
+
+          statusCode:
+            409,
+
+          code:
+            'PIX_PAYMENT_MISMATCH',
+
+          message:
+            'O pagamento Pix retornado não corresponde ao registro salvo.',
+        },
+    };
+  }
+
+  // ==========================================================
+  // STATUS ATUAL
+  // ==========================================================
+
+  const status =
+    normalizePaymentStatus(
+      payment.status ||
+      order.status,
+    );
+
+  const statusDetail =
+    normalizePaymentStatus(
+      payment
+        .status_detail ||
+      order
+        .status_detail,
+    );
+
+  await updateStoredPaymentStatus({
+    paymentRecord:
+      blockingPayment,
+
+    status,
+
+    statusDetail,
+  });
+
+  // ==========================================================
+  // TERMINOU SEM PAGAMENTO
+  // ==========================================================
+
+  if (
+    RETRYABLE_PAYMENT_STATUSES
+      .has(
+        status,
+      )
+  ) {
+    return {
+      action:
+        'retry',
+    };
+  }
+
+  const approved =
+    status ===
+      'processed' &&
+    statusDetail ===
+      'accredited';
+
+  // ==========================================================
+  // DEVOLVER MESMO QR
+  // ==========================================================
+
+  return {
+    action:
+      'reuse',
+
+    result:
+      {
+        ok:
+          true,
+
+        reused:
+          true,
+
+        approved,
+
+        appointmentId,
+
+        orderId,
+
+        paymentId:
+          storedPaymentId,
+
+        paymentRecorded:
+          true,
+
+        paymentRecordId:
+          blockingPayment.id,
+
+        status,
+
+        statusDetail,
+
+        amount:
+          amounts
+            .mercadoPagoAmount,
+
+        realAppointmentAmount:
+          amounts
+            .realAmount,
+
+        testMode:
+          MERCADO_PAGO_TEST_MODE,
+
+        pix:
+          {
+            qrCode:
+              storedPix
+                .qrCode,
+
+            qrCodeBase64:
+              storedPix
+                .qrCodeBase64,
+
+            ticketUrl:
+              storedPix
+                .ticketUrl,
+          },
+      },
+  };
+}
+
+// ============================================================
+// HEALTH
 // ============================================================
 
 app.get(
   '/health',
-  (request, response) => {
+  (
+    request,
+    response,
+  ) => {
     response.json({
-      ok: true,
-      service: 'j2i-mfa-recovery',
+      ok:
+        true,
+
+      service:
+        'j2i-mfa-recovery',
     });
   },
 );
 
 // ============================================================
-// WEBHOOK MERCADO PAGO
+// WEBHOOK
 // ============================================================
 
 registerMercadoPagoWebhook({
-  app:
-    app,
+  app,
 
-  db:
-    db,
+  db,
 
   accessToken:
     MERCADO_PAGO_ACCESS_TOKEN,
@@ -821,29 +1817,44 @@ registerMercadoPagoWebhook({
 });
 
 // ============================================================
-// INICIAR RECUPERAÇÃO MFA
+// MFA - START
 // ============================================================
 
 app.post(
   '/v1/mfa-recovery/start',
-  async (request, response) => {
+
+  async (
+    request,
+    response,
+  ) => {
     const email =
       normalizeEmail(
-        request.body?.email,
+        request
+          .body
+          ?.email,
       );
 
-    if (!isValidEmail(email)) {
+    if (
+      !isValidEmail(
+        email,
+      )
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           message:
             'Informe um e-mail válido.',
         });
     }
 
     const requestId =
-      crypto.randomUUID();
+      crypto
+        .randomUUID();
 
     const recoveryToken =
       createRecoveryToken();
@@ -859,33 +1870,37 @@ app.post(
 
     try {
       const user =
-        await auth.getUserByEmail(
-          email,
-        );
+        await auth
+          .getUserByEmail(
+            email,
+          );
 
-      if (user.emailVerified) {
+      if (
+        user
+          .emailVerified
+      ) {
         const baselineTokensValidAfterMs =
           parseFirebaseTime(
-            user.tokensValidAfterTime,
+            user
+              .tokensValidAfterTime,
           );
 
         await db
           .collection(
             'mfa_recovery_requests',
           )
-          .doc(requestId)
+          .doc(
+            requestId,
+          )
           .set({
             uid:
               user.uid,
 
-            email:
-              email,
+            email,
 
-            tokenHash:
-              tokenHash,
+            tokenHash,
 
-            baselineTokensValidAfterMs:
-              baselineTokensValidAfterMs,
+            baselineTokensValidAfterMs,
 
             status:
               'waiting_password_reset',
@@ -895,14 +1910,18 @@ app.post(
                 .serverTimestamp(),
 
             expiresAt:
-              Timestamp.fromMillis(
-                expiresAtMs,
-              ),
+              Timestamp
+                .fromMillis(
+                  expiresAtMs,
+                ),
           });
       }
-    } catch (error) {
+    } catch (
+      error
+    ) {
       if (
-        error?.code !==
+        error
+          ?.code !==
         'auth/user-not-found'
       ) {
         console.error(
@@ -912,53 +1931,68 @@ app.post(
       }
     }
 
-    return response.json({
-      ok: true,
+    return response
+      .json({
+        ok:
+          true,
 
-      requestId:
         requestId,
 
-      recoveryToken:
         recoveryToken,
 
-      expiresInMinutes:
-        RECOVERY_EXPIRATION_MINUTES,
+        expiresInMinutes:
+          RECOVERY_EXPIRATION_MINUTES,
 
-      message:
-        'Se a conta for válida, siga as instruções enviadas ao e-mail.',
-    });
+        message:
+          'Se a conta for válida, siga as instruções enviadas ao e-mail.',
+      });
   },
 );
 
 // ============================================================
-// CONCLUIR RECUPERAÇÃO MFA
+// MFA - COMPLETE
 // ============================================================
 
 app.post(
   '/v1/mfa-recovery/complete',
-  async (request, response) => {
+
+  async (
+    request,
+    response,
+  ) => {
     const requestId =
       String(
-        request.body?.requestId ||
-          '',
+        request
+          .body
+          ?.requestId ||
+        '',
       ).trim();
 
     const recoveryToken =
       String(
-        request.body?.recoveryToken ||
-          '',
+        request
+          .body
+          ?.recoveryToken ||
+        '',
       ).trim();
 
     if (
-      requestId.length < 10 ||
-      recoveryToken.length < 20
+      requestId.length <
+        10 ||
+      recoveryToken.length <
+        20
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_RECOVERY',
+
           message:
             'Não foi possível validar a recuperação.',
         });
@@ -969,33 +2003,52 @@ app.post(
         .collection(
           'mfa_recovery_requests',
         )
-        .doc(requestId);
+        .doc(
+          requestId,
+        );
 
     const snapshot =
-      await reference.get();
+      await reference
+        .get();
 
-    if (!snapshot.exists) {
+    if (
+      !snapshot
+        .exists
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_RECOVERY',
+
           message:
             'Não foi possível validar a recuperação.',
         });
     }
 
     const data =
-      snapshot.data();
+      snapshot
+        .data();
 
-    if (!data) {
+    if (
+      !data
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_RECOVERY',
+
           message:
             'Não foi possível validar a recuperação.',
         });
@@ -1006,18 +2059,24 @@ app.post(
       'waiting_password_reset'
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'RECOVERY_ALREADY_USED',
+
           message:
             'Esta recuperação já foi utilizada ou não está mais disponível.',
         });
     }
 
     const expiresAtMs =
-      data.expiresAt
+      data
+        .expiresAt
         ?.toMillis?.() ||
       0;
 
@@ -1025,21 +2084,27 @@ app.post(
       expiresAtMs <=
       Date.now()
     ) {
-      await reference.update({
-        status:
-          'expired',
+      await reference
+        .update({
+          status:
+            'expired',
 
-        expiredAt:
-          FieldValue
-            .serverTimestamp(),
-      });
+          expiredAt:
+            FieldValue
+              .serverTimestamp(),
+        });
 
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'RECOVERY_EXPIRED',
+
           message:
             'A solicitação expirou. Inicie uma nova recuperação.',
         });
@@ -1053,17 +2118,25 @@ app.post(
     if (
       !safeCompareHashes(
         receivedHash,
+
         String(
-          data.tokenHash || '',
+          data
+            .tokenHash ||
+          '',
         ),
       )
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_RECOVERY',
+
           message:
             'Não foi possível validar a recuperação.',
         });
@@ -1071,36 +2144,46 @@ app.post(
 
     const uid =
       String(
-        data.uid || '',
+        data.uid ||
+        '',
       );
 
-    if (!uid) {
+    if (
+      !uid
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_RECOVERY',
+
           message:
             'Não foi possível validar a recuperação.',
         });
     }
 
     const user =
-      await auth.getUser(
-        uid,
-      );
+      await auth
+        .getUser(
+          uid,
+        );
 
     const currentTokensValidAfterMs =
       parseFirebaseTime(
-        user.tokensValidAfterTime,
+        user
+          .tokensValidAfterTime,
       );
 
     const baselineTokensValidAfterMs =
       Number(
         data
           .baselineTokensValidAfterMs ||
-          0,
+        0,
       );
 
     if (
@@ -1108,38 +2191,51 @@ app.post(
       baselineTokensValidAfterMs
     ) {
       return response
-        .status(409)
+        .status(
+          409,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'PASSWORD_RESET_NOT_DETECTED',
+
           message:
             'Ainda não detectamos a redefinição da senha. '
-            + 'Abra o e-mail, defina uma nova senha e tente novamente.',
+            +
+            'Abra o e-mail, defina uma nova senha e tente novamente.',
         });
     }
 
     const oldFactors =
-      user.multiFactor
+      user
+        .multiFactor
         ?.enrolledFactors ||
       [];
 
-    await auth.updateUser(
-      uid,
-      {
-        phoneNumber:
-          null,
-
-        multiFactor: {
-          enrolledFactors:
+    await auth
+      .updateUser(
+        uid,
+        {
+          phoneNumber:
             null,
+
+          multiFactor:
+            {
+              enrolledFactors:
+                null,
+            },
         },
-      },
-    );
+      );
 
     await db
-      .collection('users')
-      .doc(uid)
+      .collection(
+        'users',
+      )
+      .doc(
+        uid,
+      )
       .set(
         {
           phone:
@@ -1153,7 +2249,8 @@ app.post(
               .serverTimestamp(),
         },
         {
-          merge: true,
+          merge:
+            true,
         },
       );
 
@@ -1162,50 +2259,64 @@ app.post(
         uid,
       );
 
-    await reference.update({
-      status:
-        'completed',
+    await reference
+      .update({
+        status:
+          'completed',
 
-      completedAt:
-        FieldValue
-          .serverTimestamp(),
+        completedAt:
+          FieldValue
+            .serverTimestamp(),
 
-      factorsRemoved:
-        oldFactors.length,
-    });
+        factorsRemoved:
+          oldFactors
+            .length,
+      });
 
-    return response.json({
-      ok: true,
+    return response
+      .json({
+        ok:
+          true,
 
-      code:
-        'RECOVERY_COMPLETED',
+        code:
+          'RECOVERY_COMPLETED',
 
-      message:
-        'Recuperação confirmada. '
-        + 'Entre novamente e cadastre um novo telefone de segurança.',
-    });
+        message:
+          'Recuperação confirmada. Entre novamente e cadastre um novo telefone de segurança.',
+      });
   },
 );
 
 // ============================================================
-// FINALIZAR NOVO TELEFONE APÓS RECUPERAÇÃO
+// MFA - FINALIZAR TELEFONE
 // ============================================================
 
 app.post(
   '/v1/mfa-recovery/finalize-phone',
-  async (request, response) => {
+
+  async (
+    request,
+    response,
+  ) => {
     const idToken =
       getBearerToken(
         request,
       );
 
-    if (!idToken) {
+    if (
+      !idToken
+    ) {
       return response
-        .status(401)
+        .status(
+          401,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'UNAUTHORIZED',
+
           message:
             'Autenticação necessária.',
         });
@@ -1213,16 +2324,25 @@ app.post(
 
     const requestedPhone =
       normalizeBrazilPhone(
-        request.body?.phoneNumber,
+        request
+          .body
+          ?.phoneNumber,
       );
 
-    if (!requestedPhone) {
+    if (
+      !requestedPhone
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_PHONE',
+
           message:
             'O telefone informado é inválido.',
         });
@@ -1230,81 +2350,105 @@ app.post(
 
     try {
       const decodedToken =
-        await auth.verifyIdToken(
-          idToken,
-          true,
-        );
+        await auth
+          .verifyIdToken(
+            idToken,
+            true,
+          );
 
       const uid =
         decodedToken.uid;
 
       const user =
-        await auth.getUser(
-          uid,
-        );
+        await auth
+          .getUser(
+            uid,
+          );
 
       const factors =
-        user.multiFactor
+        user
+          .multiFactor
           ?.enrolledFactors ||
         [];
 
       const matchingFactor =
         factors.find(
-          (factor) => {
+          (
+            factor,
+          ) => {
             if (
-              factor.factorId !==
+              factor
+                .factorId !==
               'phone'
             ) {
               return false;
             }
 
-            const factorPhone =
-              normalizeBrazilPhone(
-                factor.phoneNumber,
-              );
-
             return (
-              factorPhone ===
+              normalizeBrazilPhone(
+                factor
+                  .phoneNumber,
+              ) ===
               requestedPhone
             );
           },
         );
 
-      if (!matchingFactor) {
+      if (
+        !matchingFactor
+      ) {
         return response
-          .status(409)
+          .status(
+            409,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'MFA_PHONE_NOT_ENROLLED',
+
             message:
-              'O novo telefone ainda não foi '
-              + 'confirmado como fator de segurança.',
+              'O novo telefone ainda não foi confirmado como fator de segurança.',
           });
       }
 
       const userReference =
         db
-          .collection('users')
-          .doc(uid);
+          .collection(
+            'users',
+          )
+          .doc(
+            uid,
+          );
 
       const userSnapshot =
-        await userReference.get();
+        await userReference
+          .get();
 
-      if (!userSnapshot.exists) {
+      if (
+        !userSnapshot
+          .exists
+      ) {
         return response
-          .status(404)
+          .status(
+            404,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'USER_PROFILE_NOT_FOUND',
+
             message:
               'Perfil do usuário não encontrado.',
           });
       }
 
       const userData =
-        userSnapshot.data();
+        userSnapshot
+          .data();
 
       if (
         userData
@@ -1312,126 +2456,152 @@ app.post(
         true
       ) {
         return response
-          .status(409)
+          .status(
+            409,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'RECOVERY_NOT_REQUIRED',
+
             message:
-              'Esta conta não está aguardando '
-              + 'recuperação de MFA.',
+              'Esta conta não está aguardando recuperação de MFA.',
           });
       }
 
-      await userReference.set(
-        {
-          phone:
-            requestedPhone,
+      await userReference
+        .set(
+          {
+            phone:
+              requestedPhone,
 
-          mfaRecoveryRequired:
-            false,
+            mfaRecoveryRequired:
+              false,
 
-          mfaRecoveryCompletedAt:
-            FieldValue
-              .serverTimestamp(),
+            mfaRecoveryCompletedAt:
+              FieldValue
+                .serverTimestamp(),
 
-          updatedAt:
-            FieldValue
-              .serverTimestamp(),
-        },
-        {
-          merge: true,
-        },
-      );
+            updatedAt:
+              FieldValue
+                .serverTimestamp(),
+          },
+          {
+            merge:
+              true,
+          },
+        );
 
       await auth
         .revokeRefreshTokens(
           uid,
         );
 
-      return response.json({
-        ok: true,
+      return response
+        .json({
+          ok:
+            true,
 
-        code:
-          'RECOVERY_PHONE_COMPLETED',
+          code:
+            'RECOVERY_PHONE_COMPLETED',
 
-        message:
-          'Novo telefone de segurança '
-          + 'cadastrado com sucesso.',
-      });
-    } catch (error) {
+          message:
+            'Novo telefone de segurança cadastrado com sucesso.',
+        });
+    } catch (
+      error
+    ) {
       console.error(
         'FINALIZE RECOVERY PHONE ERROR:',
         error,
       );
 
       if (
-        error?.code ===
-        'auth/id-token-revoked'
+        handleAuthError(
+          error,
+          response,
+        )
       ) {
-        return response
-          .status(401)
-          .json({
-            ok: false,
-            code:
-              'TOKEN_REVOKED',
-            message:
-              'Sua sessão expirou. '
-              + 'Entre novamente.',
-          });
+        return;
       }
 
       return response
-        .status(500)
+        .status(
+          500,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'FINALIZE_PHONE_ERROR',
+
           message:
-            'Não foi possível finalizar '
-            + 'o novo telefone.',
+            'Não foi possível finalizar o novo telefone.',
         });
     }
   },
 );
 
 // ============================================================
-// PAGAMENTOS - PREPARAR CARTÃO
+// PREPARAR CARTÃO
 // ============================================================
 
 app.post(
   '/v1/payments/card/prepare',
-  async (request, response) => {
+
+  async (
+    request,
+    response,
+  ) => {
     const idToken =
       getBearerToken(
         request,
       );
 
-    if (!idToken) {
+    const appointmentId =
+      String(
+        request
+          .body
+          ?.appointmentId ||
+        '',
+      ).trim();
+
+    if (
+      !idToken
+    ) {
       return response
-        .status(401)
+        .status(
+          401,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'UNAUTHORIZED',
+
           message:
             'Usuário não autenticado.',
         });
     }
 
-    const appointmentId =
-      String(
-        request.body?.appointmentId ||
-          '',
-      ).trim();
-
-    if (!appointmentId) {
+    if (
+      !appointmentId
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'APPOINTMENT_REQUIRED',
+
           message:
             'Agendamento não informado.',
         });
@@ -1439,137 +2609,94 @@ app.post(
 
     try {
       const decodedToken =
-        await auth.verifyIdToken(
-          idToken,
-          true,
-        );
+        await auth
+          .verifyIdToken(
+            idToken,
+            true,
+          );
 
-      const uid =
-        decodedToken.uid;
+      const loaded =
+        await loadOwnedAppointment({
+          appointmentId,
 
-      const appointmentReference =
-        db
-          .collection('appointments')
-          .doc(appointmentId);
-
-      const appointmentSnapshot =
-        await appointmentReference.get();
-
-      if (!appointmentSnapshot.exists) {
-        return response
-          .status(404)
-          .json({
-            ok: false,
-            code:
-              'APPOINTMENT_NOT_FOUND',
-            message:
-              'Agendamento não encontrado.',
-          });
-      }
-
-      const appointment =
-        appointmentSnapshot.data();
-
-      if (!appointment) {
-        return response
-          .status(404)
-          .json({
-            ok: false,
-            code:
-              'APPOINTMENT_NOT_FOUND',
-            message:
-              'Dados do agendamento não encontrados.',
-          });
-      }
-
-      if (
-        appointment.userId !==
-        uid
-      ) {
-        return response
-          .status(403)
-          .json({
-            ok: false,
-            code:
-              'FORBIDDEN',
-            message:
-              'Você não possui acesso a este agendamento.',
-          });
-      }
-
-      const paymentEligibility =
-        await validateAppointmentForPayment({
-          appointmentReference:
-            appointmentReference,
-
-          appointment:
-            appointment,
+          uid:
+            decodedToken
+              .uid,
         });
 
-      if (!paymentEligibility.ok) {
-        return response
-          .status(
-            paymentEligibility.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              paymentEligibility.code,
-            message:
-              paymentEligibility.message,
-          });
+      if (
+        !loaded.ok
+      ) {
+        return sendKnownError(
+          response,
+          loaded,
+        );
       }
 
-      // ========================================================
-      // IMPEDIR COBRANÇA DUPLICADA
-      // ========================================================
+      const eligibility =
+        await validateAppointmentForPayment({
+          appointmentReference:
+            loaded.reference,
+
+          appointment:
+            loaded.appointment,
+        });
+
+      if (
+        !eligibility.ok
+      ) {
+        return sendKnownError(
+          response,
+          eligibility,
+        );
+      }
 
       const blockingPayment =
         await getBlockingPaymentForAppointment(
           appointmentId,
         );
 
-      if (blockingPayment) {
-        const conflict =
+      if (
+        blockingPayment
+      ) {
+        return sendKnownError(
+          response,
+
           getBlockingPaymentResponse(
             blockingPayment,
-          );
-
-        return response
-          .status(
-            conflict.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              conflict.code,
-            message:
-              conflict.message,
-          });
+          ),
+        );
       }
 
       const amounts =
         getAppointmentAmount(
-          appointment,
+          loaded.appointment,
         );
 
-      if (!amounts) {
+      if (
+        !amounts
+      ) {
         return response
-          .status(409)
+          .status(
+            409,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'INVALID_APPOINTMENT_PRICE',
+
             message:
               'O agendamento não possui um valor válido.',
           });
       }
 
       return response.json({
-        ok: true,
+        ok:
+          true,
 
-        appointmentId:
-          appointmentId,
+        appointmentId,
 
         amount:
           amounts
@@ -1582,48 +2709,51 @@ app.post(
         testMode:
           MERCADO_PAGO_TEST_MODE,
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         'PREPARE CARD PAYMENT ERROR:',
         {
           name:
-            error?.name ||
+            error
+              ?.name ||
             'Error',
 
           code:
-            error?.code ||
+            error
+              ?.code ||
             null,
 
           message:
-            error?.message ||
+            error
+              ?.message ||
             'Unknown error',
 
-          appointmentId:
-            appointmentId,
+          appointmentId,
         },
       );
 
       if (
-        error?.code ===
-        'auth/id-token-revoked'
+        handleAuthError(
+          error,
+          response,
+        )
       ) {
-        return response
-          .status(401)
-          .json({
-            ok: false,
-            code:
-              'TOKEN_REVOKED',
-            message:
-              'Sua sessão expirou. Entre novamente.',
-          });
+        return;
       }
 
       return response
-        .status(500)
+        .status(
+          500,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'PREPARE_CARD_PAYMENT_ERROR',
+
           message:
             'Não foi possível preparar o pagamento com cartão.',
         });
@@ -1632,42 +2762,62 @@ app.post(
 );
 
 // ============================================================
-// PAGAMENTOS - CRIAR PIX
+// PIX
 // ============================================================
 
 app.post(
   '/v1/payments/pix',
-  async (request, response) => {
+
+  async (
+    request,
+    response,
+  ) => {
     const idToken =
       getBearerToken(
         request,
       );
 
-    if (!idToken) {
+    const appointmentId =
+      String(
+        request
+          .body
+          ?.appointmentId ||
+        '',
+      ).trim();
+
+    if (
+      !idToken
+    ) {
       return response
-        .status(401)
+        .status(
+          401,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'UNAUTHORIZED',
+
           message:
             'Usuário não autenticado.',
         });
     }
 
-    const appointmentId =
-      String(
-        request.body?.appointmentId ||
-          '',
-      ).trim();
-
-    if (!appointmentId) {
+    if (
+      !appointmentId
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'APPOINTMENT_REQUIRED',
+
           message:
             'Agendamento não informado.',
         });
@@ -1684,89 +2834,74 @@ app.post(
 
     try {
       const decodedToken =
-        await auth.verifyIdToken(
-          idToken,
-          true,
-        );
+        await auth
+          .verifyIdToken(
+            idToken,
+            true,
+          );
 
       const uid =
         decodedToken.uid;
 
-      const appointmentReference =
-        db
-          .collection('appointments')
-          .doc(appointmentId);
-
-      const appointmentSnapshot =
-        await appointmentReference.get();
-
-      if (!appointmentSnapshot.exists) {
-        return response
-          .status(404)
-          .json({
-            ok: false,
-            code:
-              'APPOINTMENT_NOT_FOUND',
-            message:
-              'Agendamento não encontrado.',
-          });
-      }
-
-      const appointment =
-        appointmentSnapshot.data();
-
-      if (!appointment) {
-        return response
-          .status(404)
-          .json({
-            ok: false,
-            code:
-              'APPOINTMENT_NOT_FOUND',
-            message:
-              'Dados do agendamento não encontrados.',
-          });
-      }
-
-      if (
-        appointment.userId !==
-        uid
-      ) {
-        return response
-          .status(403)
-          .json({
-            ok: false,
-            code:
-              'FORBIDDEN',
-            message:
-              'Você não possui acesso a este agendamento.',
-          });
-      }
-
-      const paymentEligibility =
-        await validateAppointmentForPayment({
-          appointmentReference:
-            appointmentReference,
-
-          appointment:
-            appointment,
+      const loaded =
+        await loadOwnedAppointment({
+          appointmentId,
+          uid,
         });
 
-      if (!paymentEligibility.ok) {
+      if (
+        !loaded.ok
+      ) {
+        return sendKnownError(
+          response,
+          loaded,
+        );
+      }
+
+      const eligibility =
+        await validateAppointmentForPayment({
+          appointmentReference:
+            loaded.reference,
+
+          appointment:
+            loaded.appointment,
+        });
+
+      if (
+        !eligibility.ok
+      ) {
+        return sendKnownError(
+          response,
+          eligibility,
+        );
+      }
+
+      const amounts =
+        getAppointmentAmount(
+          loaded.appointment,
+        );
+
+      if (
+        !amounts
+      ) {
         return response
           .status(
-            paymentEligibility.statusCode,
+            409,
           )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
-              paymentEligibility.code,
+              'INVALID_APPOINTMENT_PRICE',
+
             message:
-              paymentEligibility.message,
+              'O agendamento não possui um valor válido.',
           });
       }
 
       // ========================================================
-      // IMPEDIR COBRANÇA DUPLICADA
+      // VERIFICAR PIX EXISTENTE
       // ========================================================
 
       const blockingPayment =
@@ -1774,77 +2909,74 @@ app.post(
           appointmentId,
         );
 
-      if (blockingPayment) {
-        const conflict =
-          getBlockingPaymentResponse(
+      if (
+        blockingPayment
+      ) {
+        const existingPix =
+          await tryReuseExistingPix({
             blockingPayment,
-          );
 
-        return response
-          .status(
-            conflict.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              conflict.code,
-            message:
-              conflict.message,
+            appointmentId,
+
+            amounts,
           });
+
+        if (
+          existingPix.action ===
+          'reuse'
+        ) {
+          return response.json(
+            existingPix.result,
+          );
+        }
+
+        if (
+          existingPix.action ===
+          'block'
+        ) {
+          return sendKnownError(
+            response,
+            existingPix.conflict,
+          );
+        }
+
+        // retry:
+        // pagamento anterior terminou sem sucesso.
       }
 
       // ========================================================
-      // LOCK ATÔMICO CONTRA DUAS CRIAÇÕES SIMULTÂNEAS
+      // LOCK
       // ========================================================
 
       appointmentReferenceForLock =
-        appointmentReference;
+        loaded.reference;
 
       const paymentLock =
         await acquirePaymentCreationLock({
           appointmentReference:
-            appointmentReference,
+            loaded.reference,
 
-          uid:
-            uid,
+          uid,
 
           method:
             'pix',
         });
 
-      if (!paymentLock.ok) {
-        return response
-          .status(
-            paymentLock.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              paymentLock.code,
-            message:
-              paymentLock.message,
-          });
+      if (
+        !paymentLock.ok
+      ) {
+        return sendKnownError(
+          response,
+          paymentLock,
+        );
       }
 
       paymentCreationLockId =
         paymentLock.lockId;
 
-      const amounts =
-        getAppointmentAmount(
-          appointment,
-        );
-
-      if (!amounts) {
-        return response
-          .status(409)
-          .json({
-            ok: false,
-            code:
-              'INVALID_APPOINTMENT_PRICE',
-            message:
-              'O agendamento não possui um valor válido.',
-          });
-      }
+      // ========================================================
+      // PAGADOR
+      // ========================================================
 
       const payerEmail =
         getPayerEmail(
@@ -1856,15 +2988,24 @@ app.post(
         !payerEmail
       ) {
         return response
-          .status(409)
+          .status(
+            409,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'EMAIL_REQUIRED',
+
             message:
               'A conta não possui e-mail válido.',
           });
       }
+
+      // ========================================================
+      // IDEMPOTÊNCIA
+      // ========================================================
 
       const idempotencyKey =
         createIdempotencyKey(
@@ -1873,6 +3014,10 @@ app.post(
 
       const externalReference =
         `j2i_appointment_${appointmentId}`;
+
+      // ========================================================
+      // CRIAR ORDER
+      // ========================================================
 
       const mercadoPagoBody = {
         type:
@@ -1888,31 +3033,35 @@ app.post(
           amounts
             .mercadoPagoAmount,
 
-        payer: {
-          email:
-            payerEmail,
-        },
+        payer:
+          {
+            email:
+              payerEmail,
+          },
 
-        transactions: {
-          payments: [
-            {
-              amount:
-                amounts
-                  .mercadoPagoAmount,
+        transactions:
+          {
+            payments:
+              [
+                {
+                  amount:
+                    amounts
+                      .mercadoPagoAmount,
 
-              payment_method: {
-                id:
-                  'pix',
+                  payment_method:
+                    {
+                      id:
+                        'pix',
 
-                type:
-                  'bank_transfer',
-              },
+                      type:
+                        'bank_transfer',
+                    },
 
-              expiration_time:
-                'PT30M',
-            },
-          ],
-        },
+                  expiration_time:
+                    'PT30M',
+                },
+              ],
+          },
       };
 
       if (
@@ -1931,19 +3080,20 @@ app.post(
             method:
               'POST',
 
-            headers: {
-              Accept:
-                'application/json',
+            headers:
+              {
+                Accept:
+                  'application/json',
 
-              'Content-Type':
-                'application/json',
+                'Content-Type':
+                  'application/json',
 
-              Authorization:
-                `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+                Authorization:
+                  `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
 
-              'X-Idempotency-Key':
-                idempotencyKey,
-            },
+                'X-Idempotency-Key':
+                  idempotencyKey,
+              },
 
             body:
               JSON.stringify(
@@ -1964,10 +3114,10 @@ app.post(
           'MERCADO PAGO PIX ERROR:',
           {
             status:
-              mercadoPagoResponse.status,
+              mercadoPagoResponse
+                .status,
 
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
             response:
               mercadoPagoData,
@@ -1975,9 +3125,12 @@ app.post(
         );
 
         return response
-          .status(502)
+          .status(
+            502,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
 
             code:
               'MERCADO_PAGO_ERROR',
@@ -1986,13 +3139,14 @@ app.post(
               'Não foi possível gerar o Pix.',
 
             mercadoPagoStatus:
-              mercadoPagoResponse.status,
+              mercadoPagoResponse
+                .status,
           });
       }
 
       const payment =
         mercadoPagoData
-          .transactions
+          ?.transactions
           ?.payments?.[0];
 
       const paymentMethod =
@@ -2001,8 +3155,10 @@ app.post(
 
       if (
         !mercadoPagoData.id ||
-        !payment?.id ||
-        !paymentMethod?.qr_code
+        !payment
+          ?.id ||
+        !paymentMethod
+          ?.qr_code
       ) {
         console.error(
           'INVALID MERCADO PAGO PIX RESPONSE:',
@@ -2010,9 +3166,12 @@ app.post(
         );
 
         return response
-          .status(502)
+          .status(
+            502,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
 
             code:
               'INVALID_PIX_RESPONSE',
@@ -2023,7 +3182,7 @@ app.post(
       }
 
       // ========================================================
-      // REGISTRAR PIX NO FIRESTORE
+      // SALVAR PIX + QR NO FIRESTORE
       // ========================================================
 
       let paymentRecorded =
@@ -2035,11 +3194,9 @@ app.post(
       try {
         const registration =
           await registerPayment({
-            db:
-              db,
+            db,
 
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
             userId:
               uid,
@@ -2057,23 +3214,29 @@ app.post(
               payment.id,
 
             status:
-              payment.status || '',
+              payment.status ||
+              '',
 
             statusDetail:
-              payment.status_detail || '',
+              payment
+                .status_detail ||
+              '',
 
             amount:
               amounts
                 .mercadoPagoAmount,
 
             amountCents:
-              amounts.priceCents,
+              amounts
+                .priceCents,
 
             realAppointmentAmount:
-              amounts.realAmount,
+              amounts
+                .realAmount,
 
             realAppointmentAmountCents:
-              amounts.priceCents,
+              amounts
+                .priceCents,
 
             testMode:
               MERCADO_PAGO_TEST_MODE,
@@ -2086,42 +3249,69 @@ app.post(
 
             installments:
               1,
+
+            // ================================================
+            // NOVO: SALVAR QR ORIGINAL
+            // ================================================
+
+            pixQrCode:
+              paymentMethod
+                .qr_code,
+
+            pixQrCodeBase64:
+              paymentMethod
+                .qr_code_base64 ||
+              '',
+
+            pixTicketUrl:
+              paymentMethod
+                .ticket_url ||
+              '',
           });
 
         paymentRecordId =
           registration
             .paymentDocumentId;
-      } catch (error) {
+      } catch (
+        error
+      ) {
         paymentRecorded =
           false;
 
-        // O Mercado Pago já pode ter criado/processado a cobrança.
-        // Mantemos o lock temporariamente para evitar uma segunda
-        // cobrança enquanto o Webhook tenta persistir os dados.
         keepPaymentCreationLock =
           true;
 
         console.error(
           'SAVE PIX PAYMENT ERROR:',
           {
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
             paymentId:
               payment.id,
 
             message:
-              error?.message ||
+              error
+                ?.message ||
               'Unknown error',
           },
         );
       }
 
-      return response.json({
-        ok: true,
+      // ========================================================
+      // RESPOSTA
+      // ========================================================
 
-        appointmentId:
-          appointmentId,
+      return response.json({
+        ok:
+          true,
+
+        reused:
+          false,
+
+        approved:
+          false,
+
+        appointmentId,
 
         orderId:
           mercadoPagoData.id,
@@ -2129,17 +3319,16 @@ app.post(
         paymentId:
           payment.id,
 
-        paymentRecorded:
-          paymentRecorded,
+        paymentRecorded,
 
-        paymentRecordId:
-          paymentRecordId,
+        paymentRecordId,
 
         status:
           payment.status,
 
         statusDetail:
-          payment.status_detail,
+          payment
+            .status_detail,
 
         amount:
           amounts
@@ -2152,49 +3341,68 @@ app.post(
         testMode:
           MERCADO_PAGO_TEST_MODE,
 
-        pix: {
-          qrCode:
-            paymentMethod
-              .qr_code,
+        pix:
+          {
+            qrCode:
+              paymentMethod
+                .qr_code,
 
-          qrCodeBase64:
-            paymentMethod
-              .qr_code_base64 ||
-            '',
+            qrCodeBase64:
+              paymentMethod
+                .qr_code_base64 ||
+              '',
 
-          ticketUrl:
-            paymentMethod
-              .ticket_url ||
-            '',
-        },
+            ticketUrl:
+              paymentMethod
+                .ticket_url ||
+              '',
+          },
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         'CREATE PIX ERROR:',
-        error,
+        {
+          name:
+            error
+              ?.name ||
+            'Error',
+
+          code:
+            error
+              ?.code ||
+            null,
+
+          message:
+            error
+              ?.message ||
+            'Unknown error',
+
+          appointmentId,
+        },
       );
 
       if (
-        error?.code ===
-        'auth/id-token-revoked'
+        handleAuthError(
+          error,
+          response,
+        )
       ) {
-        return response
-          .status(401)
-          .json({
-            ok: false,
-            code:
-              'TOKEN_REVOKED',
-            message:
-              'Sua sessão expirou. Entre novamente.',
-          });
+        return;
       }
 
       return response
-        .status(500)
+        .status(
+          500,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'CREATE_PIX_ERROR',
+
           message:
             'Não foi possível gerar o pagamento Pix.',
         });
@@ -2215,68 +3423,95 @@ app.post(
 );
 
 // ============================================================
-// PAGAMENTOS - CRIAR CARTÃO
+// CARTÃO
 // ============================================================
 
 app.post(
   '/v1/payments/card',
-  async (request, response) => {
+
+  async (
+    request,
+    response,
+  ) => {
     const idToken =
       getBearerToken(
         request,
       );
 
-    if (!idToken) {
+    const appointmentId =
+      String(
+        request
+          .body
+          ?.appointmentId ||
+        '',
+      ).trim();
+
+    if (
+      !idToken
+    ) {
       return response
-        .status(401)
+        .status(
+          401,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'UNAUTHORIZED',
+
           message:
             'Usuário não autenticado.',
         });
     }
 
-    const appointmentId =
-      String(
-        request.body?.appointmentId ||
-          '',
-      ).trim();
-
-    if (!appointmentId) {
+    if (
+      !appointmentId
+    ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'APPOINTMENT_REQUIRED',
+
           message:
             'Agendamento não informado.',
         });
     }
 
-    // ==========================================================
-    // TOKEN DO CARTÃO
-    // ==========================================================
-
     const cardToken =
       String(
-        request.body?.cardToken ||
-          '',
+        request
+          .body
+          ?.cardToken ||
+        '',
       ).trim();
 
     if (
-      cardToken.length < 10 ||
-      cardToken.length > 512 ||
-      /\s/.test(cardToken)
+      cardToken.length <
+        10 ||
+      cardToken.length >
+        512 ||
+      /\s/.test(
+        cardToken,
+      )
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_CARD_TOKEN',
+
           message:
             'Token do cartão inválido.',
         });
@@ -2284,9 +3519,10 @@ app.post(
 
     const paymentMethodId =
       String(
-        request.body
+        request
+          .body
           ?.paymentMethodId ||
-          '',
+        '',
       )
         .trim()
         .toLowerCase();
@@ -2298,11 +3534,16 @@ app.post(
         )
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_PAYMENT_METHOD',
+
           message:
             'Meio de pagamento inválido.',
         });
@@ -2310,9 +3551,10 @@ app.post(
 
     const paymentMethodType =
       String(
-        request.body
+        request
+          .body
           ?.paymentMethodType ||
-          '',
+        '',
       )
         .trim()
         .toLowerCase();
@@ -2331,11 +3573,16 @@ app.post(
         )
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_PAYMENT_METHOD_TYPE',
+
           message:
             'Tipo de cartão inválido.',
         });
@@ -2343,7 +3590,9 @@ app.post(
 
     const installments =
       Number(
-        request.body?.installments,
+        request
+          .body
+          ?.installments,
       );
 
     if (
@@ -2354,11 +3603,16 @@ app.post(
       installments > 24
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_INSTALLMENTS',
+
           message:
             'Quantidade de parcelas inválida.',
         });
@@ -2367,14 +3621,20 @@ app.post(
     if (
       paymentMethodType !==
         'credit_card' &&
-      installments !== 1
+      installments !==
+        1
     ) {
       return response
-        .status(400)
+        .status(
+          400,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
+
           code:
             'INVALID_INSTALLMENTS_FOR_CARD_TYPE',
+
           message:
             'Cartão de débito ou pré-pago deve ser pago em uma parcela.',
         });
@@ -2391,148 +3651,86 @@ app.post(
 
     try {
       const decodedToken =
-        await auth.verifyIdToken(
-          idToken,
-          true,
-        );
+        await auth
+          .verifyIdToken(
+            idToken,
+            true,
+          );
 
       const uid =
         decodedToken.uid;
 
-      const appointmentReference =
-        db
-          .collection('appointments')
-          .doc(appointmentId);
-
-      const appointmentSnapshot =
-        await appointmentReference.get();
-
-      if (
-        !appointmentSnapshot.exists
-      ) {
-        return response
-          .status(404)
-          .json({
-            ok: false,
-            code:
-              'APPOINTMENT_NOT_FOUND',
-            message:
-              'Agendamento não encontrado.',
-          });
-      }
-
-      const appointment =
-        appointmentSnapshot.data();
-
-      if (!appointment) {
-        return response
-          .status(404)
-          .json({
-            ok: false,
-            code:
-              'APPOINTMENT_NOT_FOUND',
-            message:
-              'Dados do agendamento não encontrados.',
-          });
-      }
-
-      if (
-        appointment.userId !==
-        uid
-      ) {
-        return response
-          .status(403)
-          .json({
-            ok: false,
-            code:
-              'FORBIDDEN',
-            message:
-              'Você não possui acesso a este agendamento.',
-          });
-      }
-
-      const paymentEligibility =
-        await validateAppointmentForPayment({
-          appointmentReference:
-            appointmentReference,
-
-          appointment:
-            appointment,
+      const loaded =
+        await loadOwnedAppointment({
+          appointmentId,
+          uid,
         });
 
-      if (!paymentEligibility.ok) {
-        return response
-          .status(
-            paymentEligibility.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              paymentEligibility.code,
-            message:
-              paymentEligibility.message,
-          });
+      if (
+        !loaded.ok
+      ) {
+        return sendKnownError(
+          response,
+          loaded,
+        );
       }
 
-      // ========================================================
-      // IMPEDIR COBRANÇA DUPLICADA
-      // ========================================================
+      const eligibility =
+        await validateAppointmentForPayment({
+          appointmentReference:
+            loaded.reference,
+
+          appointment:
+            loaded.appointment,
+        });
+
+      if (
+        !eligibility.ok
+      ) {
+        return sendKnownError(
+          response,
+          eligibility,
+        );
+      }
 
       const blockingPayment =
         await getBlockingPaymentForAppointment(
           appointmentId,
         );
 
-      if (blockingPayment) {
-        const conflict =
+      if (
+        blockingPayment
+      ) {
+        return sendKnownError(
+          response,
+
           getBlockingPaymentResponse(
             blockingPayment,
-          );
-
-        return response
-          .status(
-            conflict.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              conflict.code,
-            message:
-              conflict.message,
-          });
+          ),
+        );
       }
 
-      // ========================================================
-      // LOCK ATÔMICO CONTRA DUAS CRIAÇÕES SIMULTÂNEAS
-      // ========================================================
-
       appointmentReferenceForLock =
-        appointmentReference;
+        loaded.reference;
 
       const paymentLock =
         await acquirePaymentCreationLock({
           appointmentReference:
-            appointmentReference,
+            loaded.reference,
 
-          uid:
-            uid,
+          uid,
 
           method:
             'card',
         });
 
-      if (!paymentLock.ok) {
-        return response
-          .status(
-            paymentLock.statusCode,
-          )
-          .json({
-            ok: false,
-            code:
-              paymentLock.code,
-            message:
-              paymentLock.message,
-          });
+      if (
+        !paymentLock.ok
+      ) {
+        return sendKnownError(
+          response,
+          paymentLock,
+        );
       }
 
       paymentCreationLockId =
@@ -2540,16 +3738,23 @@ app.post(
 
       const amounts =
         getAppointmentAmount(
-          appointment,
+          loaded.appointment,
         );
 
-      if (!amounts) {
+      if (
+        !amounts
+      ) {
         return response
-          .status(409)
+          .status(
+            409,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'INVALID_APPOINTMENT_PRICE',
+
             message:
               'O agendamento não possui um valor válido.',
           });
@@ -2565,15 +3770,24 @@ app.post(
         !payerEmail
       ) {
         return response
-          .status(409)
+          .status(
+            409,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
+
             code:
               'EMAIL_REQUIRED',
+
             message:
               'A conta não possui e-mail válido.',
           });
       }
+
+      // ========================================================
+      // IDEMPOTÊNCIA CARTÃO
+      // ========================================================
 
       const cardTokenFingerprint =
         hashToken(
@@ -2582,21 +3796,19 @@ app.post(
 
       const idempotencyKey =
         createIdempotencyKey(
-          'card:'
-          + `${uid}:`
-          + `${appointmentId}:`
-          + `${cardTokenFingerprint}:v1`,
+          `card:${uid}:${appointmentId}:${cardTokenFingerprint}:v1`,
         );
 
-      const externalReference =
-        `j2i_appointment_${appointmentId}`;
+      // ========================================================
+      // BODY MP
+      // ========================================================
 
       const mercadoPagoBody = {
         type:
           'online',
 
         external_reference:
-          externalReference,
+          `j2i_appointment_${appointmentId}`,
 
         processing_mode:
           'automatic',
@@ -2605,34 +3817,37 @@ app.post(
           amounts
             .mercadoPagoAmount,
 
-        payer: {
-          email:
-            payerEmail,
-        },
+        payer:
+          {
+            email:
+              payerEmail,
+          },
 
-        transactions: {
-          payments: [
-            {
-              amount:
-                amounts
-                  .mercadoPagoAmount,
+        transactions:
+          {
+            payments:
+              [
+                {
+                  amount:
+                    amounts
+                      .mercadoPagoAmount,
 
-              payment_method: {
-                id:
-                  paymentMethodId,
+                  payment_method:
+                    {
+                      id:
+                        paymentMethodId,
 
-                type:
-                  paymentMethodType,
+                      type:
+                        paymentMethodType,
 
-                token:
-                  cardToken,
+                      token:
+                        cardToken,
 
-                installments:
-                  installments,
-              },
-            },
-          ],
-        },
+                      installments,
+                    },
+                },
+              ],
+          },
       };
 
       const mercadoPagoResponse =
@@ -2642,19 +3857,20 @@ app.post(
             method:
               'POST',
 
-            headers: {
-              Accept:
-                'application/json',
+            headers:
+              {
+                Accept:
+                  'application/json',
 
-              'Content-Type':
-                'application/json',
+                'Content-Type':
+                  'application/json',
 
-              Authorization:
-                `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+                Authorization:
+                  `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
 
-              'X-Idempotency-Key':
-                idempotencyKey,
-            },
+                'X-Idempotency-Key':
+                  idempotencyKey,
+              },
 
             body:
               JSON.stringify(
@@ -2678,17 +3894,13 @@ app.post(
               mercadoPagoResponse
                 .status,
 
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
-            paymentMethodId:
-              paymentMethodId,
+            paymentMethodId,
 
-            paymentMethodType:
-              paymentMethodType,
+            paymentMethodType,
 
-            installments:
-              installments,
+            installments,
 
             mercadoPagoError:
               mercadoPagoData
@@ -2705,9 +3917,12 @@ app.post(
         );
 
         return response
-          .status(502)
+          .status(
+            502,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
 
             code:
               'MERCADO_PAGO_CARD_ERROR',
@@ -2723,18 +3938,18 @@ app.post(
 
       const payment =
         mercadoPagoData
-          .transactions
+          ?.transactions
           ?.payments?.[0];
 
       if (
         !mercadoPagoData.id ||
-        !payment?.id
+        !payment
+          ?.id
       ) {
         console.error(
           'INVALID MERCADO PAGO CARD RESPONSE:',
           {
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
             hasOrderId:
               Boolean(
@@ -2743,15 +3958,19 @@ app.post(
 
             hasPaymentId:
               Boolean(
-                payment?.id,
+                payment
+                  ?.id,
               ),
           },
         );
 
         return response
-          .status(502)
+          .status(
+            502,
+          )
           .json({
-            ok: false,
+            ok:
+              false,
 
             code:
               'INVALID_CARD_RESPONSE',
@@ -2764,13 +3983,15 @@ app.post(
       const paymentStatus =
         String(
           payment.status ||
-          mercadoPagoData.status ||
+          mercadoPagoData
+            .status ||
           '',
         );
 
       const paymentStatusDetail =
         String(
-          payment.status_detail ||
+          payment
+            .status_detail ||
           mercadoPagoData
             .status_detail ||
           '',
@@ -2786,6 +4007,10 @@ app.post(
         paymentStatus ===
         'action_required';
 
+      // ========================================================
+      // REGISTRAR CARTÃO
+      // ========================================================
+
       let paymentRecorded =
         true;
 
@@ -2795,11 +4020,9 @@ app.post(
       try {
         const registration =
           await registerPayment({
-            db:
-              db,
+            db,
 
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
             userId:
               uid,
@@ -2827,13 +4050,16 @@ app.post(
                 .mercadoPagoAmount,
 
             amountCents:
-              amounts.priceCents,
+              amounts
+                .priceCents,
 
             realAppointmentAmount:
-              amounts.realAmount,
+              amounts
+                .realAmount,
 
             realAppointmentAmountCents:
-              amounts.priceCents,
+              amounts
+                .priceCents,
 
             testMode:
               MERCADO_PAGO_TEST_MODE,
@@ -2862,7 +4088,9 @@ app.post(
         paymentRecordId =
           registration
             .paymentDocumentId;
-      } catch (error) {
+      } catch (
+        error
+      ) {
         paymentRecorded =
           false;
 
@@ -2872,153 +4100,134 @@ app.post(
         console.error(
           'SAVE CARD PAYMENT ERROR:',
           {
-            appointmentId:
-              appointmentId,
+            appointmentId,
 
             paymentId:
               payment.id,
 
             message:
-              error?.message ||
+              error
+                ?.message ||
               'Unknown error',
           },
         );
       }
 
-      return response.json({
-        ok: true,
+      return response
+        .json({
+          ok:
+            true,
 
-        appointmentId:
           appointmentId,
 
-        orderId:
-          mercadoPagoData.id,
+          orderId:
+            mercadoPagoData.id,
 
-        paymentId:
-          payment.id,
+          paymentId:
+            payment.id,
 
-        paymentRecorded:
           paymentRecorded,
 
-        paymentRecordId:
           paymentRecordId,
 
-        status:
-          paymentStatus,
+          status:
+            paymentStatus,
 
-        statusDetail:
-          paymentStatusDetail,
+          statusDetail:
+            paymentStatusDetail,
 
-        orderStatus:
-          mercadoPagoData
-            .status ||
-          '',
+          orderStatus:
+            mercadoPagoData
+              .status ||
+            '',
 
-        orderStatusDetail:
-          mercadoPagoData
-            .status_detail ||
-          '',
+          orderStatusDetail:
+            mercadoPagoData
+              .status_detail ||
+            '',
 
-        approved:
           approved,
 
-        requiresAction:
           requiresAction,
 
-        amount:
-          amounts
-            .mercadoPagoAmount,
+          amount:
+            amounts
+              .mercadoPagoAmount,
 
-        realAppointmentAmount:
-          amounts
-            .realAmount,
+          realAppointmentAmount:
+            amounts
+              .realAmount,
 
-        testMode:
-          MERCADO_PAGO_TEST_MODE,
+          testMode:
+            MERCADO_PAGO_TEST_MODE,
 
-        card: {
-          paymentMethodId:
-            payment
-              ?.payment_method
-              ?.id ||
-            paymentMethodId,
+          card:
+            {
+              paymentMethodId:
+                payment
+                  ?.payment_method
+                  ?.id ||
+                paymentMethodId,
 
-          paymentMethodType:
-            payment
-              ?.payment_method
-              ?.type ||
-            paymentMethodType,
+              paymentMethodType:
+                payment
+                  ?.payment_method
+                  ?.type ||
+                paymentMethodType,
 
-          installments:
-            Number(
-              payment
-                ?.payment_method
-                ?.installments ||
-              installments,
-            ),
-        },
-      });
-    } catch (error) {
+              installments:
+                Number(
+                  payment
+                    ?.payment_method
+                    ?.installments ||
+                  installments,
+                ),
+            },
+        });
+    } catch (
+      error
+    ) {
+      // NUNCA imprimir request.body:
+      // contém cardToken.
+
       console.error(
         'CREATE CARD PAYMENT ERROR:',
         {
           name:
-            error?.name ||
+            error
+              ?.name ||
             'Error',
 
           code:
-            error?.code ||
+            error
+              ?.code ||
             null,
 
           message:
-            error?.message ||
+            error
+              ?.message ||
             'Unknown error',
 
-          appointmentId:
-            appointmentId,
+          appointmentId,
         },
       );
 
       if (
-        error?.code ===
-        'auth/id-token-revoked'
+        handleAuthError(
+          error,
+          response,
+        )
       ) {
-        return response
-          .status(401)
-          .json({
-            ok: false,
-
-            code:
-              'TOKEN_REVOKED',
-
-            message:
-              'Sua sessão expirou. Entre novamente.',
-          });
-      }
-
-      if (
-        error?.code ===
-          'auth/id-token-expired' ||
-        error?.code ===
-          'auth/argument-error'
-      ) {
-        return response
-          .status(401)
-          .json({
-            ok: false,
-
-            code:
-              'UNAUTHORIZED',
-
-            message:
-              'Sua sessão não é mais válida. Entre novamente.',
-          });
+        return;
       }
 
       return response
-        .status(500)
+        .status(
+          500,
+        )
         .json({
-          ok: false,
+          ok:
+            false,
 
           code:
             'CREATE_CARD_PAYMENT_ERROR',
@@ -3043,7 +4252,7 @@ app.post(
 );
 
 // ============================================================
-// TRATAMENTO GLOBAL DE ERRO
+// ERRO GLOBAL
 // ============================================================
 
 app.use(
@@ -3059,7 +4268,8 @@ app.use(
     );
 
     if (
-      response.headersSent
+      response
+        .headersSent
     ) {
       return next(
         error,
@@ -3067,9 +4277,12 @@ app.use(
     }
 
     return response
-      .status(500)
+      .status(
+        500,
+      )
       .json({
-        ok: false,
+        ok:
+          false,
 
         code:
           'INTERNAL_ERROR',
