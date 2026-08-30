@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -15,10 +17,12 @@ class PixPaymentPage extends StatefulWidget {
   });
 
   @override
-  State<PixPaymentPage> createState() => _PixPaymentPageState();
+  State<PixPaymentPage> createState() =>
+      _PixPaymentPageState();
 }
 
-class _PixPaymentPageState extends State<PixPaymentPage> {
+class _PixPaymentPageState
+    extends State<PixPaymentPage> {
   final PixPaymentRepository _repository =
       PixPaymentRepository();
 
@@ -28,36 +32,39 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
 
   String? _errorMessage;
 
-  // ============================================================
-  // INIT
-  // ============================================================
-  //
-  // Ao abrir esta tela:
-  //
-  // 1. Se ainda não existe Pix:
-  //    backend cria o Pix.
-  //
-  // 2. Se já existe Pix pendente:
-  //    backend recupera a MESMA Order.
-  //
-  // 3. Se a reserva expirou:
-  //    backend retorna APPOINTMENT_EXPIRED.
-  //
-  // ============================================================
+  Timer? _countdownTimer;
+
+  Timer? _statusTimer;
+
+  int _remainingSeconds = 0;
+
+  bool _reservationExpired = false;
+
+  bool _silentRefreshInProgress = false;
 
   @override
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addPostFrameCallback(
+    WidgetsBinding.instance
+        .addPostFrameCallback(
       (_) {
         _loadPix();
       },
     );
   }
 
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+
+    _statusTimer?.cancel();
+
+    super.dispose();
+  }
+
   // ============================================================
-  // CARREGAR / GERAR PIX
+  // CARREGAR / RECUPERAR PIX
   // ============================================================
 
   Future<void> _loadPix() async {
@@ -86,7 +93,14 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
         _isLoading = false;
         _errorMessage = null;
       });
+
+      _startPaymentTimers(
+        payment,
+      );
     } on PixPaymentException catch (e) {
+      _countdownTimer?.cancel();
+      _statusTimer?.cancel();
+
       if (!mounted) {
         return;
       }
@@ -96,7 +110,10 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
         _payment = null;
         _errorMessage = e.message;
       });
-    } catch (e) {
+    } catch (_) {
+      _countdownTimer?.cancel();
+      _statusTimer?.cancel();
+
       if (!mounted) {
         return;
       }
@@ -104,10 +121,196 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
       setState(() {
         _isLoading = false;
         _payment = null;
+
         _errorMessage =
-            'Não foi possível carregar o pagamento Pix.';
+            'Não foi possível carregar '
+            'o pagamento Pix.';
       });
     }
+  }
+
+  // ============================================================
+  // INICIAR CONTADORES
+  // ============================================================
+
+  void _startPaymentTimers(
+    PixPaymentResult payment,
+  ) {
+    _countdownTimer?.cancel();
+
+    _statusTimer?.cancel();
+
+    _startReservationCountdown(
+      payment,
+    );
+
+    if (
+      payment.approved ||
+      _reservationExpired
+    ) {
+      return;
+    }
+
+    // Consulta silenciosamente a MESMA Order.
+    // Não cria novo Pix.
+    _statusTimer =
+        Timer.periodic(
+      const Duration(
+        seconds: 8,
+      ),
+      (_) {
+        _refreshPaymentStatusSilently();
+      },
+    );
+  }
+
+  // ============================================================
+  // ATUALIZAR STATUS SEM PISCAR A TELA
+  // ============================================================
+
+  Future<void>
+      _refreshPaymentStatusSilently() async {
+    if (
+      _silentRefreshInProgress ||
+      _reservationExpired ||
+      _payment?.approved == true
+    ) {
+      return;
+    }
+
+    _silentRefreshInProgress =
+        true;
+
+    try {
+      final refreshed =
+          await _repository.createPix(
+        appointmentId:
+            widget.appointmentId,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _payment = refreshed;
+      });
+
+      if (refreshed.approved) {
+        _countdownTimer?.cancel();
+        _statusTimer?.cancel();
+
+        setState(() {
+          _reservationExpired =
+              false;
+
+          _remainingSeconds =
+              0;
+        });
+      }
+    } on PixPaymentException {
+      // Falha momentânea de consulta:
+      // mantém a tela funcionando.
+    } catch (_) {
+      // Polling silencioso.
+    } finally {
+      _silentRefreshInProgress =
+          false;
+    }
+  }
+
+  // ============================================================
+  // CONTAGEM REGRESSIVA
+  // ============================================================
+
+  void _startReservationCountdown(
+    PixPaymentResult payment,
+  ) {
+    _countdownTimer?.cancel();
+
+    if (payment.approved) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _remainingSeconds = 0;
+        _reservationExpired = false;
+      });
+
+      return;
+    }
+
+    final expiresAtMs =
+        payment.reservationExpiresAtMs;
+
+    if (expiresAtMs == null) {
+      return;
+    }
+
+    void updateCountdown() {
+      final nowMs =
+          DateTime.now()
+              .millisecondsSinceEpoch;
+
+      final remainingMs =
+          expiresAtMs -
+          nowMs;
+
+      final seconds =
+          remainingMs <= 0
+              ? 0
+              : (
+                  remainingMs /
+                  1000
+                ).ceil();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (seconds <= 0) {
+        _countdownTimer
+            ?.cancel();
+
+        _statusTimer
+            ?.cancel();
+
+        setState(() {
+          _remainingSeconds =
+              0;
+
+          _reservationExpired =
+              true;
+        });
+
+        return;
+      }
+
+      setState(() {
+        _remainingSeconds =
+            seconds;
+
+        _reservationExpired =
+            false;
+      });
+    }
+
+    updateCountdown();
+
+    if (_reservationExpired) {
+      return;
+    }
+
+    _countdownTimer =
+        Timer.periodic(
+      const Duration(
+        seconds: 1,
+      ),
+      (_) {
+        updateCountdown();
+      },
+    );
   }
 
   // ============================================================
@@ -115,18 +318,23 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
   // ============================================================
 
   Future<void> _copyPix() async {
-    final payment = _payment;
+    final payment =
+        _payment;
 
     if (
       payment == null ||
-      payment.qrCode.trim().isEmpty
+      payment.qrCode
+          .trim()
+          .isEmpty ||
+      _reservationExpired
     ) {
       return;
     }
 
     await Clipboard.setData(
       ClipboardData(
-        text: payment.qrCode,
+        text:
+            payment.qrCode,
       ),
     );
 
@@ -134,30 +342,34 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(
       const SnackBar(
-        content: Text(
+        content:
+            Text(
           'Código Pix copiado.',
         ),
       ),
     );
   }
 
-  // ============================================================
-  // TESTE TEMPORÁRIO - MERCADO PAGO ANDROID
-  // ============================================================
-
-  Future<void> _testMercadoPagoAndroid() async {
+  Future<void>
+      _testMercadoPagoAndroid() async {
     final ready =
-        await MercadoPagoNativeBridge.isReady();
+        await MercadoPagoNativeBridge
+            .isReady();
 
     if (!mounted) {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(
       SnackBar(
-        content: Text(
+        content:
+            Text(
           ready
               ? 'Mercado Pago Android: OK'
               : 'Mercado Pago Android: NÃO INICIALIZADO',
@@ -166,15 +378,13 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
     );
   }
 
-  // ============================================================
-  // FORMATAR VALOR
-  // ============================================================
-
   String _formatAmount(
     String value,
   ) {
     final number =
-        double.tryParse(value);
+        double.tryParse(
+      value,
+    );
 
     if (number == null) {
       return value;
@@ -184,40 +394,59 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
         '${number.toStringAsFixed(2).replaceAll('.', ',')}';
   }
 
-  // ============================================================
-  // STATUS
-  // ============================================================
-
   String _statusText(
     PixPaymentResult payment,
   ) {
     if (
-      payment.status == 'action_required' &&
-      payment.statusDetail == 'waiting_transfer'
-    ) {
-      return 'Aguardando pagamento';
-    }
-
-    if (
-      payment.status == 'processed' &&
-      payment.statusDetail == 'accredited'
+      payment.approved ||
+      (
+        payment.status ==
+            'processed' &&
+        payment.statusDetail ==
+            'accredited'
+      )
     ) {
       return 'Pagamento aprovado';
     }
 
     if (
-      payment.statusDetail.isNotEmpty
+      payment.status ==
+          'action_required' &&
+      payment.statusDetail ==
+          'waiting_transfer'
+    ) {
+      return 'Aguardando pagamento';
+    }
+
+    if (
+      payment.statusDetail
+          .isNotEmpty
     ) {
       return payment.statusDetail;
     }
 
     if (
-      payment.status.isNotEmpty
+      payment.status
+          .isNotEmpty
     ) {
       return payment.status;
     }
 
     return 'Aguardando pagamento';
+  }
+
+  String get _countdownText {
+    final minutes =
+        _remainingSeconds ~/
+        60;
+
+    final seconds =
+        _remainingSeconds %
+        60;
+
+    return
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
   }
 
   // ============================================================
@@ -232,71 +461,77 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
         _payment;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar:
+          AppBar(
         title:
             const Text(
           'Pagamento Pix',
         ),
       ),
 
-      body: SafeArea(
-        child: ListView(
+      body:
+          SafeArea(
+        child:
+            ListView(
           padding:
-              const EdgeInsets.all(20),
+              const EdgeInsets
+                  .all(
+            20,
+          ),
 
           children: [
-            const SizedBox(height: 10),
+            const SizedBox(
+              height: 10,
+            ),
 
             const Icon(
               Icons.pix,
-              size: 72,
+              size: 68,
             ),
 
-            const SizedBox(height: 18),
+            const SizedBox(
+              height: 16,
+            ),
 
             const Text(
-              'Pague com Pix',
+              'Finalize seu pagamento',
               textAlign:
                   TextAlign.center,
-              style: TextStyle(
-                fontSize: 26,
+              style:
+                  TextStyle(
+                fontSize:
+                    25,
                 fontWeight:
-                    FontWeight.bold,
+                    FontWeight
+                        .bold,
               ),
             ),
 
-            const SizedBox(height: 10),
+            const SizedBox(
+              height: 8,
+            ),
 
             const Text(
-              'Escaneie o QR Code ou copie '
-              'o código Pix para concluir '
+              'Seu horário fica reservado por até '
+              '2 minutos enquanto você realiza '
               'o pagamento.',
               textAlign:
                   TextAlign.center,
             ),
 
-            const SizedBox(height: 28),
-
-            // ==================================================
-            // CARREGANDO
-            // ==================================================
+            const SizedBox(
+              height: 26,
+            ),
 
             if (_isLoading)
               _buildLoading(),
 
-            // ==================================================
-            // ERRO
-            // ==================================================
-
             if (
               !_isLoading &&
-              _errorMessage != null
+              _errorMessage !=
+                  null
             )
               _buildError(),
-
-            // ==================================================
-            // PAGAMENTO
-            // ==================================================
 
             if (
               !_isLoading &&
@@ -311,22 +546,20 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
     );
   }
 
-  // ============================================================
-  // LOADING
-  // ============================================================
-
   Widget _buildLoading() {
     return const Padding(
       padding:
           EdgeInsets.symmetric(
         vertical: 50,
       ),
-
-      child: Column(
+      child:
+          Column(
         children: [
           CircularProgressIndicator(),
 
-          SizedBox(height: 18),
+          SizedBox(
+            height: 18,
+          ),
 
           Text(
             'Buscando pagamento Pix...',
@@ -334,7 +567,9 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
                 TextAlign.center,
           ),
 
-          SizedBox(height: 8),
+          SizedBox(
+            height: 8,
+          ),
 
           Text(
             'Se já existir um Pix para este '
@@ -348,51 +583,61 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
     );
   }
 
-  // ============================================================
-  // ERRO
-  // ============================================================
-
   Widget _buildError() {
     return Column(
       crossAxisAlignment:
-          CrossAxisAlignment.stretch,
+          CrossAxisAlignment
+              .stretch,
 
       children: [
         Container(
           padding:
-              const EdgeInsets.all(16),
+              const EdgeInsets
+                  .all(
+            16,
+          ),
 
           decoration:
               BoxDecoration(
             color:
-                Theme.of(context)
+                Theme.of(
+              context,
+            )
                     .colorScheme
                     .errorContainer,
 
             borderRadius:
                 BorderRadius.circular(
-              12,
+              14,
             ),
           ),
 
-          child: Row(
+          child:
+              Row(
             crossAxisAlignment:
-                CrossAxisAlignment.start,
+                CrossAxisAlignment
+                    .start,
 
             children: [
               Icon(
-                Icons.error_outline,
+                Icons
+                    .error_outline,
 
                 color:
-                    Theme.of(context)
+                    Theme.of(
+                  context,
+                )
                         .colorScheme
                         .onErrorContainer,
               ),
 
-              const SizedBox(width: 10),
+              const SizedBox(
+                width: 10,
+              ),
 
               Expanded(
-                child: Text(
+                child:
+                    Text(
                   _errorMessage!,
                 ),
               ),
@@ -400,7 +645,9 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(height: 18),
+        const SizedBox(
+          height: 18,
+        ),
 
         FilledButton.icon(
           onPressed:
@@ -420,39 +667,148 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
     );
   }
 
-  // ============================================================
-  // PAGAMENTO GERADO / RECUPERADO
-  // ============================================================
-
   Widget _buildPayment(
     PixPaymentResult payment,
   ) {
+    if (payment.approved) {
+      return _buildApprovedPayment(
+        payment,
+      );
+    }
+
+    if (_reservationExpired) {
+      return _buildExpiredPayment();
+    }
+
     final qrCode =
         payment.qrCode.trim();
 
     return Column(
       crossAxisAlignment:
-          CrossAxisAlignment.stretch,
+          CrossAxisAlignment
+              .stretch,
 
       children: [
         // ======================================================
-        // AMBIENTE DE TESTE
+        // CONTADOR
         // ======================================================
+
+        Container(
+          padding:
+              const EdgeInsets
+                  .symmetric(
+            horizontal: 18,
+            vertical: 16,
+          ),
+
+          decoration:
+              BoxDecoration(
+            color:
+                Theme.of(
+              context,
+            )
+                    .colorScheme
+                    .primaryContainer,
+
+            borderRadius:
+                BorderRadius.circular(
+              16,
+            ),
+          ),
+
+          child:
+              Column(
+            children: [
+              Text(
+                'Seu horário está reservado por',
+                textAlign:
+                    TextAlign
+                        .center,
+                style:
+                    TextStyle(
+                  color:
+                      Theme.of(
+                    context,
+                  )
+                          .colorScheme
+                          .onPrimaryContainer,
+                ),
+              ),
+
+              const SizedBox(
+                height: 6,
+              ),
+
+              Text(
+                _countdownText,
+                style:
+                    TextStyle(
+                  fontSize:
+                      34,
+                  fontWeight:
+                      FontWeight
+                          .w800,
+                  letterSpacing:
+                      1.5,
+                  color:
+                      Theme.of(
+                    context,
+                  )
+                          .colorScheme
+                          .onPrimaryContainer,
+                ),
+              ),
+
+              const SizedBox(
+                height: 4,
+              ),
+
+              Text(
+                'Após esse tempo, o Pix é encerrado '
+                'e o horário volta a ficar disponível.',
+                textAlign:
+                    TextAlign
+                        .center,
+                style:
+                    TextStyle(
+                  fontSize:
+                      12,
+                  color:
+                      Theme.of(
+                    context,
+                  )
+                          .colorScheme
+                          .onPrimaryContainer,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(
+          height: 20,
+        ),
 
         if (payment.testMode) ...[
           Container(
             padding:
-                const EdgeInsets.all(12),
+                const EdgeInsets
+                    .all(
+              12,
+            ),
 
             decoration:
                 BoxDecoration(
               color:
-                  Theme.of(context)
+                  Theme.of(
+                context,
+              )
                       .colorScheme
                       .secondaryContainer,
 
               borderRadius:
-                  BorderRadius.circular(
+                  BorderRadius
+                      .circular(
                 12,
               ),
             ),
@@ -461,28 +817,29 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
                 const Row(
               children: [
                 Icon(
-                  Icons.science_outlined,
+                  Icons
+                      .science_outlined,
                 ),
 
-                SizedBox(width: 10),
+                SizedBox(
+                  width: 10,
+                ),
 
                 Expanded(
-                  child: Text(
+                  child:
+                      Text(
                     'Ambiente de teste. '
-                    'Nenhum dinheiro real '
-                    'será movimentado.',
+                    'Nenhum dinheiro real será movimentado.',
                   ),
                 ),
               ],
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(
+            height: 20,
+          ),
         ],
-
-        // ======================================================
-        // VALOR
-        // ======================================================
 
         const Text(
           'Valor do Pix',
@@ -490,16 +847,16 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
               TextAlign.center,
         ),
 
-        const SizedBox(height: 4),
+        const SizedBox(
+          height: 4,
+        ),
 
         Text(
           _formatAmount(
             payment.amount,
           ),
-
           textAlign:
               TextAlign.center,
-
           style:
               const TextStyle(
             fontSize: 30,
@@ -508,16 +865,16 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(height: 8),
+        const SizedBox(
+          height: 8,
+        ),
 
         Text(
           _statusText(
             payment,
           ),
-
           textAlign:
               TextAlign.center,
-
           style:
               const TextStyle(
             fontWeight:
@@ -525,22 +882,17 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(height: 24),
-
-        // ======================================================
-        // QR CODE
-        //
-        // IMPORTANTE:
-        //
-        // O QR é desenhado a partir do "Pix Copia e Cola".
-        // Não dependemos mais de qrCodeBase64.
-        // ======================================================
+        const SizedBox(
+          height: 24,
+        ),
 
         if (qrCode.isNotEmpty)
           Center(
-            child: Container(
+            child:
+                Container(
               padding:
-                  const EdgeInsets.all(
+                  const EdgeInsets
+                      .all(
                 16,
               ),
 
@@ -550,12 +902,33 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
                     Colors.white,
 
                 borderRadius:
-                    BorderRadius.circular(
-                  16,
+                    BorderRadius
+                        .circular(
+                  18,
                 ),
+
+                boxShadow:
+                    const [
+                  BoxShadow(
+                    blurRadius:
+                        18,
+                    spreadRadius:
+                        1,
+                    offset:
+                        Offset(
+                      0,
+                      6,
+                    ),
+                    color:
+                        Color(
+                      0x1A000000,
+                    ),
+                  ),
+                ],
               ),
 
-              child: QrImageView(
+              child:
+                  QrImageView(
                 data:
                     qrCode,
 
@@ -576,11 +949,11 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
                   return const SizedBox(
                     width: 240,
                     height: 240,
-
-                    child: Center(
-                      child: Text(
-                        'Não foi possível '
-                        'desenhar o QR Code.',
+                    child:
+                        Center(
+                      child:
+                          Text(
+                        'Não foi possível desenhar o QR Code.',
                         textAlign:
                             TextAlign.center,
                       ),
@@ -593,19 +966,23 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
         else
           Container(
             padding:
-                const EdgeInsets.all(
+                const EdgeInsets
+                    .all(
               16,
             ),
 
             decoration:
                 BoxDecoration(
               color:
-                  Theme.of(context)
+                  Theme.of(
+                context,
+              )
                       .colorScheme
                       .errorContainer,
 
               borderRadius:
-                  BorderRadius.circular(
+                  BorderRadius
+                      .circular(
                 12,
               ),
             ),
@@ -615,19 +992,17 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
               'O Mercado Pago não retornou '
               'o código Pix desta cobrança.',
               textAlign:
-                  TextAlign.center,
+                  TextAlign
+                      .center,
             ),
           ),
 
-        const SizedBox(height: 24),
-
-        // ======================================================
-        // PIX COPIA E COLA
-        // ======================================================
+        const SizedBox(
+          height: 24,
+        ),
 
         const Text(
           'Pix Copia e Cola',
-
           style:
               TextStyle(
             fontWeight:
@@ -635,11 +1010,14 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(height: 8),
+        const SizedBox(
+          height: 8,
+        ),
 
         Container(
           padding:
-              const EdgeInsets.all(
+              const EdgeInsets
+                  .all(
             12,
           ),
 
@@ -648,7 +1026,9 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
             border:
                 Border.all(
               color:
-                  Theme.of(context)
+                  Theme.of(
+                context,
+              )
                       .colorScheme
                       .outlineVariant,
             ),
@@ -662,17 +1042,16 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           child:
               SelectableText(
             qrCode,
-
-            maxLines:
-                4,
+            maxLines: 4,
           ),
         ),
 
-        const SizedBox(height: 14),
+        const SizedBox(
+          height: 14,
+        ),
 
         SizedBox(
-          height:
-              52,
+          height: 52,
 
           child:
               FilledButton.icon(
@@ -693,11 +1072,9 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(height: 18),
-
-        // ======================================================
-        // RECARREGAR MESMO PIX
-        // ======================================================
+        const SizedBox(
+          height: 14,
+        ),
 
         OutlinedButton.icon(
           onPressed:
@@ -716,11 +1093,9 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
           ),
         ),
 
-        const SizedBox(height: 26),
-
-        // ======================================================
-        // DADOS DE DESENVOLVIMENTO
-        // ======================================================
+        const SizedBox(
+          height: 24,
+        ),
 
         if (payment.testMode)
           ExpansionTile(
@@ -730,7 +1105,8 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
             ),
 
             childrenPadding:
-                const EdgeInsets.only(
+                const EdgeInsets
+                    .only(
               left: 16,
               right: 16,
               bottom: 16,
@@ -740,7 +1116,6 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
               _InfoRow(
                 label:
                     'Order ID',
-
                 value:
                     payment.orderId,
               ),
@@ -748,7 +1123,6 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
               _InfoRow(
                 label:
                     'Payment ID',
-
                 value:
                     payment.paymentId,
               ),
@@ -756,7 +1130,6 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
               _InfoRow(
                 label:
                     'Status',
-
                 value:
                     payment.status,
               ),
@@ -764,31 +1137,36 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
               _InfoRow(
                 label:
                     'Status detail',
-
                 value:
-                    payment.statusDetail,
+                    payment
+                        .statusDetail,
               ),
 
               _InfoRow(
                 label:
                     'Valor real',
-
                 value:
                     _formatAmount(
                   payment
                       .realAppointmentAmount,
                 ),
               ),
+
+              _InfoRow(
+                label:
+                    'Reutilizado',
+                value:
+                    payment.reused
+                        ? 'Sim'
+                        : 'Não',
+              ),
             ],
           ),
 
-        // ======================================================
-        // BOTÃO TEMPORÁRIO SDK ANDROID
-        // Mantido para não remover funcionalidade existente.
-        // ======================================================
-
         if (payment.testMode) ...[
-          const SizedBox(height: 16),
+          const SizedBox(
+            height: 16,
+          ),
 
           OutlinedButton.icon(
             onPressed:
@@ -808,14 +1186,244 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
       ],
     );
   }
+
+  // ============================================================
+  // PAGAMENTO APROVADO
+  // ============================================================
+
+  Widget _buildApprovedPayment(
+    PixPaymentResult payment,
+  ) {
+    return Container(
+      padding:
+          const EdgeInsets.all(
+        24,
+      ),
+
+      decoration:
+          BoxDecoration(
+        color:
+            Theme.of(
+          context,
+        )
+                .colorScheme
+                .primaryContainer,
+
+        borderRadius:
+            BorderRadius.circular(
+          18,
+        ),
+      ),
+
+      child:
+          Column(
+        children: [
+          Icon(
+            Icons
+                .check_circle_outline,
+            size: 58,
+            color:
+                Theme.of(
+              context,
+            )
+                    .colorScheme
+                    .onPrimaryContainer,
+          ),
+
+          const SizedBox(
+            height: 14,
+          ),
+
+          Text(
+            'Pagamento aprovado',
+            textAlign:
+                TextAlign.center,
+            style:
+                TextStyle(
+              fontSize: 23,
+              fontWeight:
+                  FontWeight.bold,
+              color:
+                  Theme.of(
+                context,
+              )
+                      .colorScheme
+                      .onPrimaryContainer,
+            ),
+          ),
+
+          const SizedBox(
+            height: 8,
+          ),
+
+          Text(
+            _formatAmount(
+              payment.amount,
+            ),
+            textAlign:
+                TextAlign.center,
+            style:
+                TextStyle(
+              fontSize: 30,
+              fontWeight:
+                  FontWeight.w800,
+              color:
+                  Theme.of(
+                context,
+              )
+                      .colorScheme
+                      .onPrimaryContainer,
+            ),
+          ),
+
+          const SizedBox(
+            height: 8,
+          ),
+
+          Text(
+            'Recebemos a confirmação do Mercado Pago. '
+            'O agendamento será finalizado '
+            'automaticamente pelo sistema.',
+            textAlign:
+                TextAlign.center,
+            style:
+                TextStyle(
+              color:
+                  Theme.of(
+                context,
+              )
+                      .colorScheme
+                      .onPrimaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // RESERVA EXPIRADA
+  // ============================================================
+
+  Widget _buildExpiredPayment() {
+    return Container(
+      padding:
+          const EdgeInsets.all(
+        22,
+      ),
+
+      decoration:
+          BoxDecoration(
+        color:
+            Theme.of(
+          context,
+        )
+                .colorScheme
+                .errorContainer,
+
+        borderRadius:
+            BorderRadius.circular(
+          18,
+        ),
+      ),
+
+      child:
+          Column(
+        children: [
+          Icon(
+            Icons
+                .timer_off_outlined,
+            size: 52,
+            color:
+                Theme.of(
+              context,
+            )
+                    .colorScheme
+                    .onErrorContainer,
+          ),
+
+          const SizedBox(
+            height: 14,
+          ),
+
+          Text(
+            'Reserva expirada',
+            textAlign:
+                TextAlign.center,
+            style:
+                TextStyle(
+              fontSize: 22,
+              fontWeight:
+                  FontWeight.bold,
+              color:
+                  Theme.of(
+                context,
+              )
+                      .colorScheme
+                      .onErrorContainer,
+            ),
+          ),
+
+          const SizedBox(
+            height: 8,
+          ),
+
+          Text(
+            'O prazo de 2 minutos terminou. '
+            'O QR Code foi ocultado e o horário '
+            'poderá voltar a ficar disponível.',
+            textAlign:
+                TextAlign.center,
+            style:
+                TextStyle(
+              color:
+                  Theme.of(
+                context,
+              )
+                      .colorScheme
+                      .onErrorContainer,
+            ),
+          ),
+
+          const SizedBox(
+            height: 20,
+          ),
+
+          SizedBox(
+            width:
+                double.infinity,
+            height: 50,
+
+            child:
+                FilledButton.icon(
+              onPressed:
+                  () {
+                Navigator.of(
+                  context,
+                ).pop();
+              },
+
+              icon:
+                  const Icon(
+                Icons.arrow_back,
+              ),
+
+              label:
+                  const Text(
+                'VOLTAR',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-// ============================================================
-// LINHA DE INFORMAÇÃO
-// ============================================================
-
-class _InfoRow extends StatelessWidget {
+class _InfoRow
+    extends StatelessWidget {
   final String label;
+
   final String value;
 
   const _InfoRow({
@@ -833,7 +1441,8 @@ class _InfoRow extends StatelessWidget {
         bottom: 8,
       ),
 
-      child: Row(
+      child:
+          Row(
         crossAxisAlignment:
             CrossAxisAlignment.start,
 
@@ -841,7 +1450,8 @@ class _InfoRow extends StatelessWidget {
           SizedBox(
             width: 120,
 
-            child: Text(
+            child:
+                Text(
               '$label:',
 
               style:

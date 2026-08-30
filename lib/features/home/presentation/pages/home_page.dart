@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+
 import 'package:j2i_app_barbearia/features/auth/data/repositories/auth_repository.dart';
 import 'package:j2i_app_barbearia/features/security/presentation/pages/security_page.dart';
 
