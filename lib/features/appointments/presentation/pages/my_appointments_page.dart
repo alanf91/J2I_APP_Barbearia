@@ -144,6 +144,35 @@ class _MyAppointmentsPageState
       return;
     }
 
+    // ==========================================================
+    // ETAPA 33
+    // ==========================================================
+    //
+    // confirmed = pagamento aprovado.
+    //
+    // O cliente só pode cancelar diretamente uma reserva
+    // que ainda esteja aguardando pagamento.
+    // ==========================================================
+
+    if (appointment.status != 'pending_payment') {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Agendamentos confirmados não podem ser '
+            'cancelados diretamente pelo aplicativo.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
     final confirmed =
         await showDialog<bool>(
       context: context,
@@ -506,13 +535,72 @@ class _MyAppointmentsPageState
                 const _NoUpcomingAppointments()
               else
                 ...upcoming.map(
+                  (appointment) =>
+                      Padding(
+                    padding:
+                        const EdgeInsets.only(
+                      bottom: 12,
+                    ),
+                    child:
+                        _AppointmentCard(
+                      appointment:
+                          appointment,
+                      date:
+                          _formatDate(
+                        appointment.startAt,
+                      ),
+                      weekday:
+                          _weekdayName(
+                        appointment.startAt,
+                      ),
+                      month:
+                          _shortMonth(
+                        appointment
+                            .startAt
+                            .month,
+                      ),
+                      time:
+                          '${_formatTime(appointment.startMinutes)} às '
+                          '${_formatTime(appointment.endMinutes)}',
+                      price:
+                          _formatPrice(
+                        appointment.priceCents,
+                      ),
+                    ),
+                  ),
+                ),
+
+              // =================================================
+              // AGUARDANDO PAGAMENTO
+              // =================================================
+
+              if (
+                pendingPayment.isNotEmpty
+              ) ...[
+                const SizedBox(
+                  height: 22,
+                ),
+
+                _SectionTitle(
+                  icon:
+                      Icons
+                          .hourglass_top_rounded,
+                  title:
+                      'Aguardando pagamento',
+                  count:
+                      pendingPayment.length,
+                ),
+
+                const SizedBox(
+                  height: 12,
+                ),
+
+                ...pendingPayment.map(
                   (appointment) {
                     final canCancel =
-                        appointment.status ==
-                                'confirmed' &&
-                            appointment
-                                .startAt
-                                .isAfter(now);
+                        appointment
+                            .startAt
+                            .isAfter(now);
 
                     return Padding(
                       padding:
@@ -559,67 +647,6 @@ class _MyAppointmentsPageState
                       ),
                     );
                   },
-                ),
-
-              // =================================================
-              // AGUARDANDO PAGAMENTO
-              // =================================================
-
-              if (
-                pendingPayment.isNotEmpty
-              ) ...[
-                const SizedBox(
-                  height: 22,
-                ),
-
-                _SectionTitle(
-                  icon:
-                      Icons
-                          .hourglass_top_rounded,
-                  title:
-                      'Aguardando pagamento',
-                  count:
-                      pendingPayment.length,
-                ),
-
-                const SizedBox(
-                  height: 12,
-                ),
-
-                ...pendingPayment.map(
-                  (appointment) =>
-                      Padding(
-                    padding:
-                        const EdgeInsets.only(
-                      bottom: 12,
-                    ),
-                    child:
-                        _AppointmentCard(
-                      appointment:
-                          appointment,
-                      date:
-                          _formatDate(
-                        appointment.startAt,
-                      ),
-                      weekday:
-                          _weekdayName(
-                        appointment.startAt,
-                      ),
-                      month:
-                          _shortMonth(
-                        appointment
-                            .startAt
-                            .month,
-                      ),
-                      time:
-                          '${_formatTime(appointment.startMinutes)} às '
-                          '${_formatTime(appointment.endMinutes)}',
-                      price:
-                          _formatPrice(
-                        appointment.priceCents,
-                      ),
-                    ),
-                  ),
                 ),
               ],
 

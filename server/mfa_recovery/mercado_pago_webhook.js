@@ -11,6 +11,10 @@ const {
   registerPayment,
 } = require('./payment_store');
 
+const {
+  queueAppointmentConfirmationNotification,
+} = require('./notification_store');
+
 // ============================================================
 // MERCADO PAGO
 // ============================================================
@@ -30,8 +34,7 @@ function normalizeNullableString(value) {
   const normalized =
     normalizeString(value);
 
-  return normalized ||
-    null;
+  return normalized || null;
 }
 
 function amountToCents(value) {
@@ -52,8 +55,7 @@ function amountToCents(value) {
 
 function timestampToMillis(value) {
   const milliseconds =
-    value
-      ?.toMillis?.();
+    value?.toMillis?.();
 
   if (
     !Number.isFinite(
@@ -70,12 +72,8 @@ function uniqueStrings(values) {
   return [
     ...new Set(
       values
-        .map(
-          normalizeString,
-        )
-        .filter(
-          Boolean,
-        ),
+        .map(normalizeString)
+        .filter(Boolean),
     ),
   ];
 }
@@ -88,8 +86,7 @@ function safeDocumentId(value) {
         '_',
       );
 
-  return safe ||
-    'unknown';
+  return safe || 'unknown';
 }
 
 // ============================================================
@@ -100,39 +97,28 @@ function parseNotificationData(body) {
   const rawData =
     body?.data;
 
-  if (
-    !rawData
-  ) {
+  if (!rawData) {
     return {};
   }
 
   if (
-    typeof rawData ===
-      'object' &&
-    !Array.isArray(
-      rawData,
-    )
+    typeof rawData === 'object' &&
+    !Array.isArray(rawData)
   ) {
     return rawData;
   }
 
   if (
-    typeof rawData ===
-    'string'
+    typeof rawData === 'string'
   ) {
     try {
       const parsed =
-        JSON.parse(
-          rawData,
-        );
+        JSON.parse(rawData);
 
       if (
         parsed &&
-        typeof parsed ===
-          'object' &&
-        !Array.isArray(
-          parsed,
-        )
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed)
       ) {
         return parsed;
       }
@@ -160,22 +146,17 @@ function getAppointmentIdFromExternalReference(
     'j2i_appointment_';
 
   if (
-    !value.startsWith(
-      prefix,
-    )
+    !value.startsWith(prefix)
   ) {
     return null;
   }
 
   const appointmentId =
     value
-      .substring(
-        prefix.length,
-      )
+      .substring(prefix.length)
       .trim();
 
-  return appointmentId ||
-    null;
+  return appointmentId || null;
 }
 
 // ============================================================
@@ -198,8 +179,7 @@ function detectMethod(payment) {
     ).toLowerCase();
 
   if (
-    paymentMethodId ===
-      'pix' ||
+    paymentMethodId === 'pix' ||
     paymentMethodType ===
       'bank_transfer'
   ) {
@@ -218,13 +198,9 @@ function isApprovedPayment(
   statusDetail,
 ) {
   return (
-    normalizeString(
-      status,
-    ) ===
+    normalizeString(status) ===
       'processed' &&
-    normalizeString(
-      statusDetail,
-    ) ===
+    normalizeString(statusDetail) ===
       'accredited'
   );
 }
@@ -241,8 +217,7 @@ async function getMercadoPagoOrder({
     await fetch(
       `${MERCADO_PAGO_ORDERS_URL}/${encodeURIComponent(orderId)}`,
       {
-        method:
-          'GET',
+        method: 'GET',
 
         headers: {
           Accept:
@@ -255,22 +230,17 @@ async function getMercadoPagoOrder({
     );
 
   const raw =
-    await mercadoPagoResponse
-      .text();
+    await mercadoPagoResponse.text();
 
-  let data =
-    {};
+  let data = {};
 
   try {
     data =
       raw
-        ? JSON.parse(
-            raw,
-          )
+        ? JSON.parse(raw)
         : {};
   } catch (_) {
-    data =
-      {};
+    data = {};
   }
 
   if (
@@ -282,8 +252,7 @@ async function getMercadoPagoOrder({
       );
 
     error.status =
-      mercadoPagoResponse
-        .status;
+      mercadoPagoResponse.status;
 
     error.mercadoPagoData =
       data;
@@ -328,14 +297,13 @@ async function findExistingPaymentsByOrderId({
 // AUDITORIA DO WEBHOOK
 // ============================================================
 //
-// Salva somente dados necessários para auditoria.
-//
 // NÃO salvamos:
 //
 // token do cartão
 // access token
 // secret
 // x-signature
+//
 // ============================================================
 
 async function registerWebhookAudit({
@@ -360,32 +328,22 @@ async function registerWebhookAudit({
   integrityIssues,
 
   confirmationEligible,
+  confirmationApplied,
+  confirmationAlreadyApplied,
   confirmationBlockedReason,
 
   requiresManualReview,
 }) {
   const auditId = [
     'mercado_pago_webhook',
-
-    safeDocumentId(
-      orderId,
-    ),
-
-    safeDocumentId(
-      paymentId,
-    ),
-  ].join(
-    '_',
-  );
+    safeDocumentId(orderId),
+    safeDocumentId(paymentId),
+  ].join('_');
 
   const reference =
     db
-      .collection(
-        'audit_logs',
-      )
-      .doc(
-        auditId,
-      );
+      .collection('audit_logs')
+      .doc(auditId);
 
   const snapshot =
     await reference.get();
@@ -398,14 +356,10 @@ async function registerWebhookAudit({
       'mercado_pago',
 
     orderId:
-      normalizeString(
-        orderId,
-      ),
+      normalizeString(orderId),
 
     paymentId:
-      normalizeString(
-        paymentId,
-      ),
+      normalizeString(paymentId),
 
     appointmentId:
       normalizeNullableString(
@@ -426,14 +380,10 @@ async function registerWebhookAudit({
       liveMode === true,
 
     status:
-      normalizeString(
-        status,
-      ),
+      normalizeString(status),
 
     statusDetail:
-      normalizeString(
-        statusDetail,
-      ),
+      normalizeString(statusDetail),
 
     paymentAmountCents:
       Number.isInteger(
@@ -456,12 +406,17 @@ async function registerWebhookAudit({
 
     integrityIssues:
       uniqueStrings(
-        integrityIssues ||
-        [],
+        integrityIssues || [],
       ),
 
     confirmationEligible:
-      confirmationEligible ===
+      confirmationEligible === true,
+
+    confirmationApplied:
+      confirmationApplied === true,
+
+    confirmationAlreadyApplied:
+      confirmationAlreadyApplied ===
       true,
 
     confirmationBlockedReason:
@@ -470,31 +425,26 @@ async function registerWebhookAudit({
       ),
 
     requiresManualReview:
-      requiresManualReview ===
-      true,
+      requiresManualReview === true,
 
     lastSeenAt:
-      FieldValue
-        .serverTimestamp(),
+      FieldValue.serverTimestamp(),
 
     deliveryCount:
-      FieldValue
-        .increment(1),
+      FieldValue.increment(1),
   };
 
   if (
     !snapshot.exists
   ) {
     data.firstSeenAt =
-      FieldValue
-        .serverTimestamp();
+      FieldValue.serverTimestamp();
   }
 
   await reference.set(
     data,
     {
-      merge:
-        true,
+      merge: true,
     },
   );
 }
@@ -508,9 +458,7 @@ async function markAppointmentExpiredIfNeeded({
   appointmentReference,
 }) {
   await db.runTransaction(
-    async (
-      transaction,
-    ) => {
+    async (transaction) => {
       const snapshot =
         await transaction.get(
           appointmentReference,
@@ -523,8 +471,7 @@ async function markAppointmentExpiredIfNeeded({
       }
 
       const appointment =
-        snapshot.data() ||
-        {};
+        snapshot.data() || {};
 
       const status =
         normalizeString(
@@ -533,16 +480,14 @@ async function markAppointmentExpiredIfNeeded({
 
       const expirationMs =
         timestampToMillis(
-          appointment
-            .paymentExpiresAt,
+          appointment.paymentExpiresAt,
         );
 
       if (
         status ===
           'pending_payment' &&
         expirationMs != null &&
-        expirationMs <=
-          Date.now()
+        expirationMs <= Date.now()
       ) {
         transaction.update(
           appointmentReference,
@@ -561,6 +506,550 @@ async function markAppointmentExpiredIfNeeded({
 }
 
 // ============================================================
+// SLOTS DO AGENDAMENTO
+// ============================================================
+
+function getAppointmentSlotStarts({
+  startMinutes,
+  endMinutes,
+}) {
+  const start =
+    Number(startMinutes);
+
+  const end =
+    Number(endMinutes);
+
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end > 1440 ||
+    end <= start
+  ) {
+    return [];
+  }
+
+  const slots = [];
+
+  for (
+    let current = start;
+    current < end;
+    current += 15
+  ) {
+    slots.push(current);
+  }
+
+  return slots;
+}
+
+// ============================================================
+// ETAPA 33
+// CONFIRMAR AGENDAMENTO APÓS PAGAMENTO APROVADO
+// ============================================================
+//
+// A confirmação acontece em uma transação.
+//
+// Revalidamos:
+//
+// - appointment existe
+// - status ainda é pending_payment
+// - reserva de 2 minutos ainda está válida
+// - atendimento ainda não começou
+// - todos os slots ainda pertencem ao appointment
+//
+// A mesma transação altera:
+//
+// appointments:
+// pending_payment -> confirmed
+//
+// slots:
+// pending_payment -> confirmed
+//
+// ============================================================
+
+async function confirmAppointmentAfterApprovedPayment({
+  db,
+  appointmentReference,
+  appointmentId,
+  orderId,
+  paymentId,
+  method,
+  amountCents,
+}) {
+  return db.runTransaction(
+    async (transaction) => {
+      const snapshot =
+        await transaction.get(
+          appointmentReference,
+        );
+
+      if (
+        !snapshot.exists
+      ) {
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_not_found',
+          requiresManualReview: true,
+        };
+      }
+
+      const appointment =
+        snapshot.data() || {};
+
+      const appointmentStatus =
+        normalizeString(
+          appointment.status,
+        );
+
+      const existingConfirmation =
+        appointment.confirmation &&
+        typeof appointment.confirmation ===
+          'object'
+          ? appointment.confirmation
+          : {};
+
+      const existingOrderId =
+        normalizeString(
+          existingConfirmation.orderId,
+        );
+
+      const existingPaymentId =
+        normalizeString(
+          existingConfirmation.paymentId,
+        );
+
+      // ========================================================
+      // IDEMPOTÊNCIA
+      // ========================================================
+
+      if (
+        appointmentStatus ===
+        'confirmed'
+      ) {
+        const sameOrder =
+          Boolean(existingOrderId) &&
+          existingOrderId ===
+            normalizeString(orderId);
+
+        const samePayment =
+          Boolean(existingPaymentId) &&
+          existingPaymentId ===
+            normalizeString(paymentId);
+
+        if (
+          sameOrder &&
+          samePayment
+        ) {
+          return {
+            confirmed: true,
+            alreadyConfirmed: true,
+            blockedReason: null,
+            requiresManualReview: false,
+          };
+        }
+
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_confirmed_by_different_payment',
+          requiresManualReview: true,
+        };
+      }
+
+      if (
+        appointmentStatus !==
+        'pending_payment'
+      ) {
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+
+          blockedReason:
+            appointmentStatus ===
+              'expired'
+              ? 'appointment_expired'
+              : appointmentStatus ===
+                  'cancelled'
+                ? 'appointment_cancelled'
+                : 'appointment_status_not_payable',
+
+          requiresManualReview: true,
+        };
+      }
+
+      const nowMs =
+        Date.now();
+
+      // ========================================================
+      // VALIDAR EXPIRAÇÃO DOS 2 MINUTOS
+      // ========================================================
+
+      const expirationMs =
+        timestampToMillis(
+          appointment.paymentExpiresAt,
+        );
+
+      if (
+        expirationMs == null
+      ) {
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_expiration_invalid',
+          requiresManualReview: true,
+        };
+      }
+
+      if (
+        expirationMs <= nowMs
+      ) {
+        transaction.update(
+          appointmentReference,
+          {
+            status:
+              'expired',
+
+            expiredAt:
+              FieldValue
+                .serverTimestamp(),
+          },
+        );
+
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_expired',
+          requiresManualReview: true,
+        };
+      }
+
+      // ========================================================
+      // O HORÁRIO NÃO PODE TER COMEÇADO
+      // ========================================================
+
+      const startAtMs =
+        timestampToMillis(
+          appointment.startAt,
+        );
+
+      if (
+        startAtMs != null &&
+        startAtMs <= nowMs
+      ) {
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_already_started',
+          requiresManualReview: true,
+        };
+      }
+
+      // ========================================================
+      // DADOS DO SLOT
+      // ========================================================
+
+      const professionalId =
+        normalizeString(
+          appointment.professionalId,
+        );
+
+      const dateKey =
+        normalizeString(
+          appointment.dateKey,
+        );
+
+      const startMinutes =
+        Number(
+          appointment.startMinutes,
+        );
+
+      const endMinutes =
+        Number(
+          appointment.endMinutes,
+        );
+
+      if (
+        !professionalId ||
+        !dateKey ||
+        !Number.isInteger(
+          startMinutes,
+        ) ||
+        !Number.isInteger(
+          endMinutes,
+        )
+      ) {
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_slot_data_invalid',
+          requiresManualReview: true,
+        };
+      }
+
+      const slotStarts =
+        getAppointmentSlotStarts({
+          startMinutes,
+          endMinutes,
+        });
+
+      if (
+        slotStarts.length === 0
+      ) {
+        return {
+          confirmed: false,
+          alreadyConfirmed: false,
+          blockedReason:
+            'appointment_slots_not_found',
+          requiresManualReview: true,
+        };
+      }
+
+      const slotReferences =
+        slotStarts.map(
+          (slotStart) => {
+            const slotId =
+              slotStart
+                .toString()
+                .padStart(
+                  4,
+                  '0',
+                );
+
+            return db
+              .collection(
+                'professionals',
+              )
+              .doc(
+                professionalId,
+              )
+              .collection(
+                'booked_days',
+              )
+              .doc(
+                dateKey,
+              )
+              .collection(
+                'slots',
+              )
+              .doc(
+                slotId,
+              );
+          },
+        );
+
+      // ========================================================
+      // LEITURAS DOS SLOTS
+      // ========================================================
+
+      const slotSnapshots = [];
+
+      for (
+        const slotReference
+        of slotReferences
+      ) {
+        slotSnapshots.push(
+          await transaction.get(
+            slotReference,
+          ),
+        );
+      }
+
+      // ========================================================
+      // VALIDAR CADA SLOT
+      // ========================================================
+
+      for (
+        let index = 0;
+        index <
+          slotSnapshots.length;
+        index += 1
+      ) {
+        const slotSnapshot =
+          slotSnapshots[index];
+
+        const expectedSlotStart =
+          slotStarts[index];
+
+        if (
+          !slotSnapshot.exists
+        ) {
+          return {
+            confirmed: false,
+            alreadyConfirmed: false,
+            blockedReason:
+              'appointment_slot_missing',
+            requiresManualReview: true,
+          };
+        }
+
+        const slot =
+          slotSnapshot.data() || {};
+
+        const slotAppointmentId =
+          normalizeString(
+            slot.appointmentId,
+          );
+
+        const slotProfessionalId =
+          normalizeString(
+            slot.professionalId,
+          );
+
+        const slotDateKey =
+          normalizeString(
+            slot.dateKey,
+          );
+
+        const slotStatus =
+          normalizeString(
+            slot.status,
+          );
+
+        const slotStartMinutes =
+          Number(
+            slot.startMinutes,
+          );
+
+        if (
+          slotAppointmentId !==
+            appointmentId ||
+          slotProfessionalId !==
+            professionalId ||
+          slotDateKey !==
+            dateKey ||
+          slotStartMinutes !==
+            expectedSlotStart
+        ) {
+          return {
+            confirmed: false,
+            alreadyConfirmed: false,
+            blockedReason:
+              'appointment_slot_mismatch',
+            requiresManualReview: true,
+          };
+        }
+
+        if (
+          slotStatus !==
+          'pending_payment'
+        ) {
+          return {
+            confirmed: false,
+            alreadyConfirmed: false,
+            blockedReason:
+              'appointment_slot_status_invalid',
+            requiresManualReview: true,
+          };
+        }
+
+        const slotExpirationMs =
+          timestampToMillis(
+            slot.paymentExpiresAt,
+          );
+
+        if (
+          slotExpirationMs == null ||
+          slotExpirationMs <= nowMs
+        ) {
+          return {
+            confirmed: false,
+            alreadyConfirmed: false,
+            blockedReason:
+              'appointment_slot_expired',
+            requiresManualReview: true,
+          };
+        }
+      }
+
+      // ========================================================
+      // CONFIRMAR APPOINTMENT
+      // ========================================================
+
+      transaction.update(
+        appointmentReference,
+        {
+          status:
+            'confirmed',
+
+          confirmedAt:
+            FieldValue
+              .serverTimestamp(),
+
+          confirmedBy:
+            'mercado_pago_webhook',
+
+          confirmation: {
+            provider:
+              'mercado_pago',
+
+            orderId:
+              normalizeString(
+                orderId,
+              ),
+
+            paymentId:
+              normalizeString(
+                paymentId,
+              ),
+
+            method:
+              normalizeString(
+                method,
+              ),
+
+            amountCents:
+              Number.isInteger(
+                amountCents,
+              )
+                ? amountCents
+                : null,
+
+            confirmedAt:
+              FieldValue
+                .serverTimestamp(),
+          },
+        },
+      );
+
+      // ========================================================
+      // CONFIRMAR SLOTS
+      // ========================================================
+
+      for (
+        const slotReference
+        of slotReferences
+      ) {
+        transaction.update(
+          slotReference,
+          {
+            status:
+              'confirmed',
+
+            confirmedAt:
+              FieldValue
+                .serverTimestamp(),
+          },
+        );
+      }
+
+      return {
+        confirmed: true,
+        alreadyConfirmed: false,
+        blockedReason: null,
+        requiresManualReview: false,
+      };
+    },
+  );
+}
+
+// ============================================================
 // PROCESSAR ORDER
 // ============================================================
 
@@ -568,8 +1057,7 @@ async function processOrder({
   db,
   order,
   configuredTestMode,
-  notificationMeta =
-    {},
+  notificationMeta = {},
 }) {
   // ==========================================================
   // ORDER
@@ -590,8 +1078,7 @@ async function processOrder({
 
   const externalReference =
     normalizeString(
-      order
-        ?.external_reference,
+      order?.external_reference,
     );
 
   const externalAppointmentId =
@@ -675,15 +1162,11 @@ async function processOrder({
       : 1;
 
   const method =
-    detectMethod(
-      payment,
-    );
+    detectMethod(payment);
 
   const testMode =
-    order.live_mode ===
-      false ||
-    configuredTestMode ===
-      true;
+    order.live_mode === false ||
+    configuredTestMode === true;
 
   const approved =
     isApprovedPayment(
@@ -692,21 +1175,17 @@ async function processOrder({
     );
 
   // ==========================================================
-  // REGISTROS JÁ EXISTENTES PARA ESTA ORDER
+  // PAGAMENTOS JÁ EXISTENTES
   // ==========================================================
 
   const existingPayments =
     await findExistingPaymentsByOrderId({
-      db:
-        db,
-
-      orderId:
-        orderId,
+      db,
+      orderId,
     });
 
   const existingPayment =
-    existingPayments[0] ||
-    null;
+    existingPayments[0] || null;
 
   const existingAppointmentId =
     normalizeString(
@@ -716,15 +1195,10 @@ async function processOrder({
     );
 
   // ==========================================================
-  // VERIFICAR INTEGRIDADE DA ASSOCIAÇÃO
+  // INTEGRIDADE
   // ==========================================================
 
-  const integrityIssues =
-    [];
-
-  // ----------------------------------------------------------
-  // EXTERNAL REFERENCE
-  // ----------------------------------------------------------
+  const integrityIssues = [];
 
   if (
     !externalReference
@@ -740,10 +1214,6 @@ async function processOrder({
     );
   }
 
-  // ----------------------------------------------------------
-  // APPOINTMENT DA ORDER X REGISTRO EXISTENTE
-  // ----------------------------------------------------------
-
   if (
     externalAppointmentId &&
     existingAppointmentId &&
@@ -755,13 +1225,8 @@ async function processOrder({
     );
   }
 
-  // ----------------------------------------------------------
-  // MAIS DE UM PAYMENT PARA A MESMA ORDER
-  // ----------------------------------------------------------
-
   if (
-    existingPayments.length >
-    1
+    existingPayments.length > 1
   ) {
     integrityIssues.push(
       'multiple_payment_records_for_same_order',
@@ -771,12 +1236,6 @@ async function processOrder({
   // ==========================================================
   // DETERMINAR APPOINTMENT
   // ==========================================================
-  //
-  // A external_reference retornada diretamente pela API do MP
-  // é a fonte principal.
-  //
-  // Existing payment é apenas fallback para registros antigos.
-  // ==========================================================
 
   const appointmentId =
     externalAppointmentId ||
@@ -784,7 +1243,7 @@ async function processOrder({
     null;
 
   // ==========================================================
-  // NÃO CONSEGUIU RESOLVER O APPOINTMENT
+  // SEM APPOINTMENT
   // ==========================================================
 
   if (
@@ -795,37 +1254,25 @@ async function processOrder({
     );
 
     await registerWebhookAudit({
-      db:
-        db,
+      db,
 
-      orderId:
-        orderId,
+      orderId,
+      paymentId,
 
-      paymentId:
-        paymentId,
+      appointmentId: null,
 
-      appointmentId:
-        null,
-
-      externalReference:
-        externalReference,
+      externalReference,
 
       applicationId:
-        notificationMeta
-          .applicationId,
+        notificationMeta.applicationId,
 
       liveMode:
-        notificationMeta
-          .liveMode,
+        notificationMeta.liveMode,
 
-      status:
-        status,
+      status,
+      statusDetail,
 
-      statusDetail:
-        statusDetail,
-
-      paymentAmountCents:
-        paymentAmountCents,
+      paymentAmountCents,
 
       appointmentAmountCents:
         null,
@@ -833,10 +1280,15 @@ async function processOrder({
       integrityStatus:
         'invalid',
 
-      integrityIssues:
-        integrityIssues,
+      integrityIssues,
 
       confirmationEligible:
+        false,
+
+      confirmationApplied:
+        false,
+
+      confirmationAlreadyApplied:
         false,
 
       confirmationBlockedReason:
@@ -847,26 +1299,13 @@ async function processOrder({
     });
 
     return {
-      processed:
-        false,
-
-      appointmentId:
-        null,
-
-      orderId:
-        orderId,
-
-      paymentId:
-        paymentId,
-
-      method:
-        method,
-
-      status:
-        status,
-
-      statusDetail:
-        statusDetail,
+      processed: false,
+      appointmentId: null,
+      orderId,
+      paymentId,
+      method,
+      status,
+      statusDetail,
 
       integrityStatus:
         'invalid',
@@ -879,30 +1318,40 @@ async function processOrder({
       confirmationEligible:
         false,
 
+      confirmationApplied:
+        false,
+
+      confirmationAlreadyApplied:
+        false,
+
       confirmationBlockedReason:
         'appointment_id_not_found',
 
       requiresManualReview:
         approved,
+
+      notificationQueued:
+        false,
+
+      notificationAlreadyQueued:
+        false,
+
+      notificationId:
+        null,
     };
   }
 
   // ==========================================================
-  // BUSCAR AGENDAMENTO
+  // BUSCAR APPOINTMENT
   // ==========================================================
 
   const appointmentReference =
     db
-      .collection(
-        'appointments',
-      )
-      .doc(
-        appointmentId,
-      );
+      .collection('appointments')
+      .doc(appointmentId);
 
   let appointmentSnapshot =
-    await appointmentReference
-      .get();
+    await appointmentReference.get();
 
   if (
     !appointmentSnapshot.exists
@@ -912,37 +1361,24 @@ async function processOrder({
     );
 
     await registerWebhookAudit({
-      db:
-        db,
+      db,
 
-      orderId:
-        orderId,
+      orderId,
+      paymentId,
+      appointmentId,
 
-      paymentId:
-        paymentId,
-
-      appointmentId:
-        appointmentId,
-
-      externalReference:
-        externalReference,
+      externalReference,
 
       applicationId:
-        notificationMeta
-          .applicationId,
+        notificationMeta.applicationId,
 
       liveMode:
-        notificationMeta
-          .liveMode,
+        notificationMeta.liveMode,
 
-      status:
-        status,
+      status,
+      statusDetail,
 
-      statusDetail:
-        statusDetail,
-
-      paymentAmountCents:
-        paymentAmountCents,
+      paymentAmountCents,
 
       appointmentAmountCents:
         null,
@@ -950,10 +1386,15 @@ async function processOrder({
       integrityStatus:
         'invalid',
 
-      integrityIssues:
-        integrityIssues,
+      integrityIssues,
 
       confirmationEligible:
+        false,
+
+      confirmationApplied:
+        false,
+
+      confirmationAlreadyApplied:
         false,
 
       confirmationBlockedReason:
@@ -964,26 +1405,13 @@ async function processOrder({
     });
 
     return {
-      processed:
-        false,
-
-      appointmentId:
-        appointmentId,
-
-      orderId:
-        orderId,
-
-      paymentId:
-        paymentId,
-
-      method:
-        method,
-
-      status:
-        status,
-
-      statusDetail:
-        statusDetail,
+      processed: false,
+      appointmentId,
+      orderId,
+      paymentId,
+      method,
+      status,
+      statusDetail,
 
       integrityStatus:
         'invalid',
@@ -996,17 +1424,31 @@ async function processOrder({
       confirmationEligible:
         false,
 
+      confirmationApplied:
+        false,
+
+      confirmationAlreadyApplied:
+        false,
+
       confirmationBlockedReason:
         'appointment_not_found',
 
       requiresManualReview:
         approved,
+
+      notificationQueued:
+        false,
+
+      notificationAlreadyQueued:
+        false,
+
+      notificationId:
+        null,
     };
   }
 
   let appointment =
-    appointmentSnapshot
-      .data();
+    appointmentSnapshot.data();
 
   if (
     !appointment
@@ -1017,7 +1459,7 @@ async function processOrder({
   }
 
   // ==========================================================
-  // USER ID
+  // USER
   // ==========================================================
 
   const userId =
@@ -1038,11 +1480,8 @@ async function processOrder({
       ?.data
       ?.userId &&
     normalizeString(
-      existingPayment
-        .data
-        .userId,
-    ) !==
-      userId
+      existingPayment.data.userId,
+    ) !== userId
   ) {
     integrityIssues.push(
       'payment_user_mismatch',
@@ -1055,16 +1494,14 @@ async function processOrder({
 
   const appointmentPriceCents =
     Number(
-      appointment
-        .priceCents,
+      appointment.priceCents,
     );
 
   const validAppointmentPrice =
     Number.isInteger(
       appointmentPriceCents,
     ) &&
-    appointmentPriceCents >
-      0;
+    appointmentPriceCents > 0;
 
   if (
     !validAppointmentPrice
@@ -1079,22 +1516,16 @@ async function processOrder({
   // ==========================================================
 
   if (
-    paymentAmountCents ==
-    null
+    paymentAmountCents == null
   ) {
     integrityIssues.push(
       'payment_amount_invalid',
     );
   }
 
-  // ==========================================================
-  // COMPARAR VALORES
-  // ==========================================================
-
   if (
     validAppointmentPrice &&
-    paymentAmountCents !=
-      null &&
+    paymentAmountCents != null &&
     paymentAmountCents !==
       appointmentPriceCents
   ) {
@@ -1102,10 +1533,6 @@ async function processOrder({
       'payment_amount_mismatch',
     );
   }
-
-  // ==========================================================
-  // VALOR REAL DO APPOINTMENT
-  // ==========================================================
 
   const realAppointmentAmountCents =
     validAppointmentPrice
@@ -1120,8 +1547,7 @@ async function processOrder({
     Number.isInteger(
       realAppointmentAmountCents,
     ) &&
-    realAppointmentAmountCents >
-      0
+    realAppointmentAmountCents > 0
       ? (
           realAppointmentAmountCents /
           100
@@ -1129,7 +1555,7 @@ async function processOrder({
       : '';
 
   // ==========================================================
-  // STATUS DO APPOINTMENT
+  // STATUS
   // ==========================================================
 
   let appointmentStatus =
@@ -1140,6 +1566,12 @@ async function processOrder({
   let confirmationEligible =
     false;
 
+  let confirmationApplied =
+    false;
+
+  let confirmationAlreadyApplied =
+    false;
+
   let confirmationBlockedReason =
     null;
 
@@ -1148,43 +1580,34 @@ async function processOrder({
 
   const expirationMs =
     timestampToMillis(
-      appointment
-        .paymentExpiresAt,
+      appointment.paymentExpiresAt,
     );
 
   const startAtMs =
     timestampToMillis(
-      appointment
-        .startAt,
+      appointment.startAt,
     );
 
   // ==========================================================
-  // RESERVA VENCEU, MAS AINDA ESTÁ pending_payment
+  // EXPIRAR SE NECESSÁRIO
   // ==========================================================
 
   if (
     appointmentStatus ===
       'pending_payment' &&
-    expirationMs !=
-      null &&
-    expirationMs <=
-      Date.now()
+    expirationMs != null &&
+    expirationMs <= Date.now()
   ) {
     await markAppointmentExpiredIfNeeded({
-      db:
-        db,
-
-      appointmentReference:
-        appointmentReference,
+      db,
+      appointmentReference,
     });
 
     appointmentSnapshot =
-      await appointmentReference
-        .get();
+      await appointmentReference.get();
 
     appointment =
-      appointmentSnapshot
-        .data() ||
+      appointmentSnapshot.data() ||
       appointment;
 
     appointmentStatus =
@@ -1203,18 +1626,17 @@ async function processOrder({
     );
 
   const integrityStatus =
-    criticalIntegrityIssues
-      .length === 0
+    criticalIntegrityIssues.length ===
+    0
       ? 'valid'
       : 'invalid';
 
   // ==========================================================
-  // ELEGIBILIDADE PARA FUTURA ETAPA 33
+  // ELEGIBILIDADE
   // ==========================================================
 
   if (
-    integrityStatus !==
-    'valid'
+    integrityStatus !== 'valid'
   ) {
     confirmationBlockedReason =
       'payment_integrity_failed';
@@ -1232,7 +1654,7 @@ async function processOrder({
       'payment_not_approved';
   } else if (
     appointmentStatus ===
-    'cancelled'
+      'cancelled'
   ) {
     confirmationBlockedReason =
       'appointment_cancelled';
@@ -1241,7 +1663,7 @@ async function processOrder({
       true;
   } else if (
     appointmentStatus ===
-    'expired'
+      'expired'
   ) {
     confirmationBlockedReason =
       'appointment_expired';
@@ -1250,13 +1672,54 @@ async function processOrder({
       true;
   } else if (
     appointmentStatus ===
-    'confirmed'
+      'confirmed'
   ) {
-    confirmationBlockedReason =
-      'appointment_already_confirmed';
+    // ========================================================
+    // PODE SER WEBHOOK REPETIDO
+    // ========================================================
+
+    const existingConfirmation =
+      appointment.confirmation &&
+      typeof appointment.confirmation ===
+        'object'
+        ? appointment.confirmation
+        : {};
+
+    const confirmedOrderId =
+      normalizeString(
+        existingConfirmation.orderId,
+      );
+
+    const confirmedPaymentId =
+      normalizeString(
+        existingConfirmation.paymentId,
+      );
+
+    const sameOrder =
+      Boolean(confirmedOrderId) &&
+      confirmedOrderId === orderId;
+
+    const samePayment =
+      Boolean(confirmedPaymentId) &&
+      confirmedPaymentId ===
+        paymentId;
+
+    if (
+      sameOrder &&
+      samePayment
+    ) {
+      confirmationEligible =
+        true;
+    } else {
+      confirmationBlockedReason =
+        'appointment_confirmed_by_different_payment';
+
+      requiresManualReview =
+        true;
+    }
   } else if (
     appointmentStatus !==
-    'pending_payment'
+      'pending_payment'
   ) {
     confirmationBlockedReason =
       'appointment_status_not_payable';
@@ -1264,8 +1727,7 @@ async function processOrder({
     requiresManualReview =
       true;
   } else if (
-    expirationMs ==
-    null
+    expirationMs == null
   ) {
     confirmationBlockedReason =
       'appointment_expiration_invalid';
@@ -1273,8 +1735,7 @@ async function processOrder({
     requiresManualReview =
       true;
   } else if (
-    expirationMs <=
-    Date.now()
+    expirationMs <= Date.now()
   ) {
     confirmationBlockedReason =
       'appointment_expired';
@@ -1283,8 +1744,7 @@ async function processOrder({
       true;
   } else if (
     startAtMs != null &&
-    startAtMs <=
-      Date.now()
+    startAtMs <= Date.now()
   ) {
     confirmationBlockedReason =
       'appointment_already_started';
@@ -1292,87 +1752,44 @@ async function processOrder({
     requiresManualReview =
       true;
   } else {
-    // ========================================================
-    // ESTE É O CENÁRIO IDEAL
-    // ========================================================
-    //
-    // assinatura válida
-    // Order confirmada pela API
-    // external_reference válida
-    // valor correto
-    // appointment pending_payment
-    // reserva ainda válida
-    // pagamento processado/acreditado
-    //
-    // Ainda NÃO confirmamos o appointment.
-    //
-    // Apenas registramos:
-    //
-    // confirmationEligible = true
-    //
-    // A mudança:
-    //
-    // pending_payment → confirmed
-    //
-    // será implementada na etapa 33.
-    // ========================================================
-
     confirmationEligible =
       true;
   }
 
   // ==========================================================
-  // PODEMOS SALVAR PAYMENT?
+  // SALVAR PAYMENT
   // ==========================================================
 
   const canPersistPayment =
     userId &&
-    paymentAmountCents !=
-      null &&
+    paymentAmountCents != null &&
     Number.isInteger(
       realAppointmentAmountCents,
     ) &&
-    realAppointmentAmountCents >
-      0;
+    realAppointmentAmountCents > 0;
 
-  let registration =
-    null;
-
-  // ==========================================================
-  // SALVAR PAYMENT
-  // ==========================================================
+  let registration = null;
 
   if (
     canPersistPayment
   ) {
     registration =
       await registerPayment({
-        db:
-          db,
+        db,
 
-        appointmentId:
-          appointmentId,
-
-        userId:
-          userId,
+        appointmentId,
+        userId,
 
         provider:
           'mercado_pago',
 
-        method:
-          method,
+        method,
 
-        orderId:
-          orderId,
+        orderId,
+        paymentId,
 
-        paymentId:
-          paymentId,
-
-        status:
-          status,
-
-        statusDetail:
-          statusDetail,
+        status,
+        statusDetail,
 
         amount:
           paymentAmount,
@@ -1380,54 +1797,257 @@ async function processOrder({
         amountCents:
           paymentAmountCents,
 
-        realAppointmentAmount:
-          realAppointmentAmount,
+        realAppointmentAmount,
 
-        realAppointmentAmountCents:
-          realAppointmentAmountCents,
+        realAppointmentAmountCents,
 
-        testMode:
-          testMode,
+        testMode,
 
-        paymentMethodId:
-          paymentMethodId,
+        paymentMethodId,
 
-        paymentMethodType:
-          paymentMethodType,
+        paymentMethodType,
 
-        installments:
-          installments,
+        installments,
 
         source:
           'mercado_pago_webhook',
 
-        integrityStatus:
-          integrityStatus,
+        integrityStatus,
 
         integrityIssues:
           criticalIntegrityIssues,
 
-        confirmationEligible:
-          confirmationEligible,
+        confirmationEligible,
 
-        confirmationBlockedReason:
-          confirmationBlockedReason,
+        confirmationApplied,
 
-        requiresManualReview:
-          requiresManualReview,
+        confirmationAlreadyApplied,
 
-        // ====================================================
-        // NÃO ASSOCIAR DADOS INCONSISTENTES AO APPOINTMENT
-        // ====================================================
+        confirmationBlockedReason,
+
+        requiresManualReview,
 
         attachToAppointment:
-          integrityStatus ===
-          'valid',
+          integrityStatus === 'valid',
       });
   }
 
   // ==========================================================
-  // REGISTRAR WEBHOOK NO APPOINTMENT
+  // RESULTADO DA ETAPA 34.1
+  // ==========================================================
+
+  let notificationQueued =
+    false;
+
+  let notificationAlreadyQueued =
+    false;
+
+  let notificationId =
+    null;
+
+  // ==========================================================
+  // ETAPA 33
+  // CONFIRMAR APPOINTMENT
+  // ==========================================================
+
+  if (
+    confirmationEligible
+  ) {
+    const confirmationResult =
+      await confirmAppointmentAfterApprovedPayment({
+        db,
+
+        appointmentReference,
+        appointmentId,
+
+        orderId,
+        paymentId,
+
+        method,
+
+        amountCents:
+          paymentAmountCents,
+      });
+
+    confirmationApplied =
+      confirmationResult.confirmed ===
+      true;
+
+    confirmationAlreadyApplied =
+      confirmationResult
+        .alreadyConfirmed === true;
+
+    if (
+      confirmationApplied
+    ) {
+      appointmentStatus =
+        'confirmed';
+
+      confirmationBlockedReason =
+        null;
+
+      requiresManualReview =
+        false;
+    } else {
+      confirmationEligible =
+        false;
+
+      confirmationBlockedReason =
+        normalizeNullableString(
+          confirmationResult
+            .blockedReason,
+        ) ||
+        'appointment_confirmation_failed';
+
+      requiresManualReview =
+        confirmationResult
+          .requiresManualReview === true;
+    }
+  }
+
+  // ==========================================================
+  // ETAPA 34.1
+  // CRIAR NOTIFICAÇÃO PENDENTE NO OUTBOX
+  // ==========================================================
+  //
+  // Ainda NÃO enviamos SMS aqui.
+  //
+  // Só criamos a intenção de envio depois que a Etapa 33
+  // confirmou o agendamento com sucesso.
+  //
+  // O notification_store usa um ID determinístico por
+  // appointment, então webhooks repetidos não criam mensagens
+  // duplicadas.
+  //
+  // Se houver uma falha técnica ao criar o outbox, lançamos o
+  // erro para o webhook responder 500.
+  // ==========================================================
+
+  if (
+    confirmationApplied &&
+    appointmentStatus === 'confirmed' &&
+    requiresManualReview === false
+  ) {
+    try {
+      const notificationResult =
+        await queueAppointmentConfirmationNotification({
+          db,
+
+          appointmentId,
+          userId,
+
+          serviceName:
+            appointment.serviceName,
+
+          professionalName:
+            appointment.professionalName,
+
+          startAt:
+            appointment.startAt,
+
+          endAt:
+            appointment.endAt,
+
+          dateKey:
+            appointment.dateKey,
+
+          startMinutes:
+            appointment.startMinutes,
+
+          endMinutes:
+            appointment.endMinutes,
+
+          orderId,
+          paymentId,
+        });
+
+      notificationQueued =
+        notificationResult.queued ===
+        true;
+
+      notificationAlreadyQueued =
+        notificationResult
+          .alreadyQueued === true;
+
+      notificationId =
+        normalizeNullableString(
+          notificationResult
+            .notificationId,
+        );
+    } catch (error) {
+      console.error(
+        'NOTIFICATION OUTBOX ERROR:',
+        {
+          appointmentId,
+          orderId,
+          paymentId,
+
+          name:
+            error?.name ||
+            'Error',
+
+          message:
+            error?.message ||
+            'Unknown error',
+        },
+      );
+
+      throw error;
+    }
+  }
+
+  // ==========================================================
+  // ATUALIZAR PAYMENT COM RESULTADO
+  // ==========================================================
+
+  if (
+    registration
+      ?.paymentDocumentId
+  ) {
+    await db
+      .collection('payments')
+      .doc(
+        registration.paymentDocumentId,
+      )
+      .set(
+        {
+          confirmationEligible,
+
+          confirmationApplied,
+
+          confirmationAlreadyApplied,
+
+          confirmationBlockedReason:
+            normalizeNullableString(
+              confirmationBlockedReason,
+            ),
+
+          requiresManualReview,
+
+          notificationQueued,
+
+          notificationAlreadyQueued,
+
+          notificationId:
+            normalizeNullableString(
+              notificationId,
+            ),
+
+          appointmentStatusAfterWebhook:
+            appointmentStatus,
+
+          confirmationProcessedAt:
+            FieldValue
+              .serverTimestamp(),
+        },
+        {
+          merge: true,
+        },
+      );
+  }
+
+  // ==========================================================
+  // WEBHOOK NO APPOINTMENT
   // ==========================================================
 
   await appointmentReference.set(
@@ -1442,22 +2062,18 @@ async function processOrder({
         verifiedByApi:
           true,
 
-        orderId:
-          orderId,
+        orderId,
 
-        paymentId:
-          paymentId,
+        paymentId,
 
         externalReference:
           normalizeNullableString(
             externalReference,
           ),
 
-        status:
-          status,
+        status,
 
-        statusDetail:
-          statusDetail,
+        statusDetail,
 
         amountCents:
           paymentAmountCents,
@@ -1467,22 +2083,32 @@ async function processOrder({
             ? appointmentPriceCents
             : null,
 
-        integrityStatus:
-          integrityStatus,
+        integrityStatus,
 
         integrityIssues:
           criticalIntegrityIssues,
 
-        confirmationEligible:
-          confirmationEligible,
+        confirmationEligible,
+
+        confirmationApplied,
+
+        confirmationAlreadyApplied,
 
         confirmationBlockedReason:
           normalizeNullableString(
             confirmationBlockedReason,
           ),
 
-        requiresManualReview:
-          requiresManualReview,
+        requiresManualReview,
+
+        notificationQueued,
+
+        notificationAlreadyQueued,
+
+        notificationId:
+          normalizeNullableString(
+            notificationId,
+          ),
 
         receivedAt:
           FieldValue
@@ -1490,8 +2116,7 @@ async function processOrder({
       },
     },
     {
-      merge:
-        true,
+      merge: true,
     },
   );
 
@@ -1500,57 +2125,44 @@ async function processOrder({
   // ==========================================================
 
   await registerWebhookAudit({
-    db:
-      db,
+    db,
 
-    orderId:
-      orderId,
+    orderId,
+    paymentId,
+    appointmentId,
 
-    paymentId:
-      paymentId,
-
-    appointmentId:
-      appointmentId,
-
-    externalReference:
-      externalReference,
+    externalReference,
 
     applicationId:
-      notificationMeta
-        .applicationId,
+      notificationMeta.applicationId,
 
     liveMode:
-      notificationMeta
-        .liveMode,
+      notificationMeta.liveMode,
 
-    status:
-      status,
+    status,
+    statusDetail,
 
-    statusDetail:
-      statusDetail,
-
-    paymentAmountCents:
-      paymentAmountCents,
+    paymentAmountCents,
 
     appointmentAmountCents:
       validAppointmentPrice
         ? appointmentPriceCents
         : null,
 
-    integrityStatus:
-      integrityStatus,
+    integrityStatus,
 
     integrityIssues:
       criticalIntegrityIssues,
 
-    confirmationEligible:
-      confirmationEligible,
+    confirmationEligible,
 
-    confirmationBlockedReason:
-      confirmationBlockedReason,
+    confirmationApplied,
 
-    requiresManualReview:
-      requiresManualReview,
+    confirmationAlreadyApplied,
+
+    confirmationBlockedReason,
+
+    requiresManualReview,
   });
 
   // ==========================================================
@@ -1558,46 +2170,45 @@ async function processOrder({
   // ==========================================================
 
   return {
-    processed:
-      true,
+    processed: true,
 
-    appointmentId:
-      appointmentId,
+    appointmentId,
 
-    orderId:
-      orderId,
+    orderId,
 
-    paymentId:
-      paymentId,
+    paymentId,
 
     paymentRecordId:
       registration
         ?.paymentDocumentId ||
       null,
 
-    method:
-      method,
+    method,
 
-    status:
-      status,
+    status,
 
-    statusDetail:
-      statusDetail,
+    statusDetail,
 
-    integrityStatus:
-      integrityStatus,
+    integrityStatus,
 
     integrityIssues:
       criticalIntegrityIssues,
 
-    confirmationEligible:
-      confirmationEligible,
+    confirmationEligible,
 
-    confirmationBlockedReason:
-      confirmationBlockedReason,
+    confirmationApplied,
 
-    requiresManualReview:
-      requiresManualReview,
+    confirmationAlreadyApplied,
+
+    confirmationBlockedReason,
+
+    requiresManualReview,
+
+    notificationQueued,
+
+    notificationAlreadyQueued,
+
+    notificationId,
   };
 }
 
@@ -1657,30 +2268,20 @@ function registerMercadoPagoWebhook({
 
       const type =
         normalizeString(
-          request
-            .query
-            ?.type ||
-          request
-            .body
-            ?.type,
+          request.query?.type ||
+          request.body?.type,
         ).toLowerCase();
 
       if (
         type &&
-        type !==
-          'order'
+        type !== 'order'
       ) {
         return response
           .status(200)
           .json({
-            ok:
-              true,
-
-            ignored:
-              true,
-
-            type:
-              type,
+            ok: true,
+            ignored: true,
+            type,
           });
       }
 
@@ -1703,8 +2304,7 @@ function registerMercadoPagoWebhook({
         return response
           .status(503)
           .json({
-            ok:
-              false,
+            ok: false,
 
             code:
               'WEBHOOK_SECRET_NOT_CONFIGURED',
@@ -1728,8 +2328,7 @@ function registerMercadoPagoWebhook({
         return response
           .status(400)
           .json({
-            ok:
-              false,
+            ok: false,
 
             code:
               'WEBHOOK_DATA_ID_REQUIRED',
@@ -1761,8 +2360,7 @@ function registerMercadoPagoWebhook({
         return response
           .status(401)
           .json({
-            ok:
-              false,
+            ok: false,
 
             code:
               'INVALID_WEBHOOK_SIGNATURE',
@@ -1785,42 +2383,32 @@ function registerMercadoPagoWebhook({
 
       const applicationId =
         normalizeString(
-          request
-            .body
+          request.body
             ?.application_id,
         );
 
       const liveMode =
-        request
-          .body
-          ?.live_mode;
+        request.body?.live_mode;
 
       console.log(
         'WEBHOOK ORIGEM:',
         {
           applicationId:
-            applicationId ||
-            null,
+            applicationId || null,
 
           liveMode:
-            liveMode ??
-            null,
+            liveMode ?? null,
 
           type:
-            request
-              .body
-              ?.type ??
-            request
-              .query
-              ?.type ??
+            request.body?.type ??
+            request.query?.type ??
             null,
 
           queryDataId:
             dataId,
 
           bodyDataId:
-            bodyOrderId ||
-            null,
+            bodyOrderId || null,
         },
       );
 
@@ -1831,17 +2419,13 @@ function registerMercadoPagoWebhook({
       try {
         WebhookSignatureValidator
           .validate({
-            xSignature:
-              xSignature,
+            xSignature,
 
-            xRequestId:
-              xRequestId,
+            xRequestId,
 
-            dataId:
-              dataId,
+            dataId,
 
-            secret:
-              secret,
+            secret,
           });
       } catch (
         error
@@ -1865,8 +2449,7 @@ function registerMercadoPagoWebhook({
               liveMode ??
               null,
 
-            dataId:
-              dataId,
+            dataId,
           },
         );
 
@@ -1877,8 +2460,7 @@ function registerMercadoPagoWebhook({
           return response
             .status(401)
             .json({
-              ok:
-                false,
+              ok: false,
 
               code:
                 'INVALID_WEBHOOK_SIGNATURE',
@@ -1895,16 +2477,13 @@ function registerMercadoPagoWebhook({
       console.log(
         'MERCADO PAGO WEBHOOK: ASSINATURA VÁLIDA ✅',
         {
-          dataId:
-            dataId,
+          dataId,
 
           applicationId:
-            applicationId ||
-            null,
+            applicationId || null,
 
           liveMode:
-            liveMode ??
-            null,
+            liveMode ?? null,
         },
       );
 
@@ -1914,9 +2493,7 @@ function registerMercadoPagoWebhook({
 
       const notificationId =
         normalizeString(
-          request
-            .body
-            ?.id,
+          request.body?.id,
         );
 
       const isSimulator =
@@ -1933,37 +2510,21 @@ function registerMercadoPagoWebhook({
         return response
           .status(200)
           .json({
-            ok:
-              true,
-
-            simulated:
-              true,
+            ok: true,
+            simulated: true,
           });
       }
 
       // ========================================================
       // ORDER ID CANÔNICO
       // ========================================================
-      //
-      // IMPORTANTE:
-      //
-      // Sempre usamos o data.id que participou da validação
-      // criptográfica.
-      //
-      // Não usamos body.data.id como fonte principal.
-      // ========================================================
 
       const orderId =
         dataId;
 
-      // ========================================================
-      // BODY DIFERENTE DO ID ASSINADO
-      // ========================================================
-
       if (
         bodyOrderId &&
-        bodyOrderId !==
-          orderId
+        bodyOrderId !== orderId
       ) {
         console.warn(
           'MERCADO PAGO WEBHOOK: BODY DATA.ID DIFERENTE DO DATA.ID ASSINADO.',
@@ -1978,22 +2539,15 @@ function registerMercadoPagoWebhook({
       }
 
       // ========================================================
-      // CONSULTAR ORDER NA API MERCADO PAGO
+      // CONSULTAR ORDER NA API
       // ========================================================
 
       try {
         const order =
           await getMercadoPagoOrder({
-            orderId:
-              orderId,
-
-            accessToken:
-              accessToken,
+            orderId,
+            accessToken,
           });
-
-        // ======================================================
-        // VERIFICAR ORDER ID RETORNADO PELA API
-        // ======================================================
 
         const verifiedOrderId =
           normalizeString(
@@ -2001,8 +2555,7 @@ function registerMercadoPagoWebhook({
           );
 
         if (
-          verifiedOrderId !==
-          orderId
+          verifiedOrderId !== orderId
         ) {
           throw new Error(
             'ORDER_ID_MISMATCH',
@@ -2010,26 +2563,21 @@ function registerMercadoPagoWebhook({
         }
 
         // ======================================================
-        // PROCESSAR ORDER
+        // PROCESSAR
         // ======================================================
 
         const result =
           await processOrder({
-            db:
-              db,
+            db,
 
-            order:
-              order,
+            order,
 
             configuredTestMode:
               testMode,
 
             notificationMeta: {
-              applicationId:
-                applicationId,
-
-              liveMode:
-                liveMode,
+              applicationId,
+              liveMode,
             },
           });
 
@@ -2047,44 +2595,41 @@ function registerMercadoPagoWebhook({
               true,
 
             processed:
-              result
-                .processed,
+              result.processed,
 
             appointmentId:
-              result
-                .appointmentId,
+              result.appointmentId,
 
             orderId:
-              result
-                .orderId,
+              result.orderId,
 
             paymentId:
-              result
-                .paymentId,
+              result.paymentId,
 
             method:
-              result
-                .method,
+              result.method,
 
             status:
-              result
-                .status,
+              result.status,
 
             statusDetail:
-              result
-                .statusDetail,
+              result.statusDetail,
 
             integrityStatus:
-              result
-                .integrityStatus,
+              result.integrityStatus,
 
             integrityIssues:
-              result
-                .integrityIssues,
+              result.integrityIssues,
 
             confirmationEligible:
+              result.confirmationEligible,
+
+            confirmationApplied:
+              result.confirmationApplied,
+
+            confirmationAlreadyApplied:
               result
-                .confirmationEligible,
+                .confirmationAlreadyApplied,
 
             confirmationBlockedReason:
               result
@@ -2093,53 +2638,56 @@ function registerMercadoPagoWebhook({
             requiresManualReview:
               result
                 .requiresManualReview,
+
+            notificationQueued:
+              result
+                .notificationQueued,
+
+            notificationAlreadyQueued:
+              result
+                .notificationAlreadyQueued,
+
+            notificationId:
+              result
+                .notificationId,
           },
         );
 
         // ======================================================
-        // RESPOSTA 200 PARA ERROS DE REGRA DE NEGÓCIO
-        // ======================================================
-        //
-        // Exemplos:
-        //
-        // appointment cancelado
-        // reserva expirada
-        // valor incorreto
-        // external_reference incorreta
-        //
-        // Essas situações já foram auditadas.
-        //
-        // Repetir o mesmo Webhook não corrigiria o problema.
+        // RESPOSTA
         // ======================================================
 
         return response
           .status(200)
           .json({
-            ok:
-              true,
+            ok: true,
 
             processed:
-              result
-                .processed,
+              result.processed,
 
             integrityStatus:
-              result
-                .integrityStatus,
+              result.integrityStatus,
 
             confirmationEligible:
-              result
-                .confirmationEligible,
+              result.confirmationEligible,
+
+            confirmationApplied:
+              result.confirmationApplied,
+
+            notificationQueued:
+              result.notificationQueued,
+
+            notificationAlreadyQueued:
+              result.notificationAlreadyQueued,
+
+            notificationId:
+              result.notificationId,
           });
       } catch (
         error
       ) {
         // ======================================================
         // ERRO TÉCNICO REAL
-        // ======================================================
-        //
-        // Aqui retornamos 500.
-        //
-        // Assim uma falha temporária pode ser tentada novamente.
         // ======================================================
 
         console.error(
@@ -2157,8 +2705,7 @@ function registerMercadoPagoWebhook({
               error?.message ||
               'Unknown error',
 
-            orderId:
-              orderId,
+            orderId,
 
             status:
               error?.status ||
@@ -2169,8 +2716,7 @@ function registerMercadoPagoWebhook({
         return response
           .status(500)
           .json({
-            ok:
-              false,
+            ok: false,
 
             code:
               'WEBHOOK_PROCESSING_ERROR',
