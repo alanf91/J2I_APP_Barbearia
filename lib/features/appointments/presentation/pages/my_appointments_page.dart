@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:j2i_app_barbearia/app/theme/app_theme.dart';
 import 'package:j2i_app_barbearia/features/appointments/data/models/barbershop_appointment.dart';
 import 'package:j2i_app_barbearia/features/appointments/data/repositories/appointment_repository.dart';
+import 'package:j2i_app_barbearia/features/appointments/presentation/pages/appointment_details_page.dart';
 
 class MyAppointmentsPage extends StatefulWidget {
   const MyAppointmentsPage({
@@ -346,6 +347,23 @@ class _MyAppointmentsPageState
   }
 
   // ============================================================
+  // ABRIR DETALHES DO AGENDAMENTO
+  // ============================================================
+
+  Future<void> _openAppointmentDetails(
+    BarbershopAppointment appointment,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) =>
+            AppointmentDetailsPage(
+          appointment: appointment,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
   // BUILD
   // ============================================================
 
@@ -566,6 +584,12 @@ class _MyAppointmentsPageState
                           _formatPrice(
                         appointment.priceCents,
                       ),
+                      onTap:
+                          () {
+                        _openAppointmentDetails(
+                          appointment,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -632,6 +656,12 @@ class _MyAppointmentsPageState
                             _formatPrice(
                           appointment.priceCents,
                         ),
+                        onTap:
+                            () {
+                          _openAppointmentDetails(
+                            appointment,
+                          );
+                        },
                         canCancel:
                             canCancel,
                         isCancelling:
@@ -705,6 +735,12 @@ class _MyAppointmentsPageState
                           _formatPrice(
                         appointment.priceCents,
                       ),
+                      onTap:
+                          () {
+                        _openAppointmentDetails(
+                          appointment,
+                        );
+                      },
                       historical:
                           true,
                     ),
@@ -957,6 +993,7 @@ class _AppointmentCard extends StatelessWidget {
   final bool canCancel;
   final bool isCancelling;
 
+  final VoidCallback? onTap;
   final VoidCallback? onCancel;
 
   const _AppointmentCard({
@@ -969,6 +1006,7 @@ class _AppointmentCard extends StatelessWidget {
     this.historical = false,
     this.canCancel = false,
     this.isCancelling = false,
+    this.onTap,
     this.onCancel,
   });
 
@@ -980,7 +1018,15 @@ class _AppointmentCard extends StatelessWidget {
       historical: historical,
     );
 
-    return Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius:
+            BorderRadius.circular(
+          20,
+        ),
+        child: Container(
       decoration:
           BoxDecoration(
         color:
@@ -1297,6 +1343,8 @@ class _AppointmentCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }
